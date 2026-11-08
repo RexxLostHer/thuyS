@@ -1,11 +1,15 @@
 /**
  * Wink HD Enhancer — Interactive Split Comparison Slider & Dual-Video Sync Engine
- * High-performance 60fps CSS clip-path comparison slider for images and synchronized dual videos.
+ * Refactored strictly adhering to PRD Remediasi & Refactoring Menyeluruh (Fase 2 & Fase 4)
+ * Implements loadVideoSourceReady Promise cycle, requestVideoFrameCallback 60fps render loop,
+ * and isolated Canvas 2D split rendering without Multiplane Overlay black screens.
  */
 
 class ComparisonSlider {
   constructor(options = {}) {
     this.container = options.container || document.getElementById('comparisonContainer');
+    this.canvas = options.canvas || document.getElementById('comparisonCanvas');
+    this.ctx = this.canvas ? this.canvas.getContext('2d', { willReadFrequently: true }) : null;
     this.layerBefore = options.layerBefore || document.getElementById('layerBefore');
     this.layerAfter = options.layerAfter || document.getElementById('layerAfter');
     this.divider = options.divider || document.getElementById('sliderDivider');
@@ -26,7 +30,9 @@ class ComparisonSlider {
     this.masterVideo = null;
     this.slaveVideo = null;
     this.syncRafId = null;
-    this.syncThreshold = 0.04; // 40ms (~1 frame drift threshold)
+    this.videoCallbackId = null;
+    this.isLoopActive = false;
+    this.syncThreshold = 0.04; // 40ms drift threshold
 
     this.initSliderEvents();
     this.initVideoControlEvents();
@@ -76,15 +82,24 @@ class ComparisonSlider {
   updatePosition(percent) {
     this.position = percent;
     this.container.style.setProperty('--slider-pos', `${percent}%`);
+    if (this.mode === 'video') {
+      this.drawVideoFrames();
+    }
   }
 
   /**
-   * Set up Image Comparison Mode
+   * Set up Image Comparison Mode (CSS clip-path)
    */
   setImageComparison(beforeUrl, afterUrl) {
     this.cleanupVideoSync();
     this.mode = 'image';
     this.videoControls.style.display = 'none';
+
+    if (this.canvas) {
+      this.canvas.style.display = 'none';
+    }
+    this.layerBefore.style.display = 'flex';
+    this.layerAfter.style.display = 'flex';
 
     this.layerBefore.innerHTML = `<img src="${beforeUrl}" class="comparison-media" alt="Original Low-Res">`;
     this.layerAfter.innerHTML = `<img src="${afterUrl}" class="comparison-media" alt="Wink HD Enhanced">`;
@@ -94,111 +109,340 @@ class ComparisonSlider {
   }
 
   /**
-   * Set up Synchronized Dual-Video Comparison Mode
+   * PRD Seksi 4.1: Memuat file video ke dalam HTMLVideoElement hingga frame pertama benar-benar siap digambar ke Canvas.
+   * Mencegah bug canvas 0x0 dan frame hitam pada saat inisialisasi.
    */
-  setVideoComparison(beforeUrl, afterUrl) {
+  loadVideoSourceReady(videoElement, fileOrUrl) {
+    return new Promise((resolve, reject) => {
+      // 1. Bersihkan ObjectURL lama jika ada
+      if (videoElement.dataset.objectUrl) {
+        URL.revokeObjectURL(videoElement.dataset.objectUrl);
+        delete videoElement.dataset.objectUrl;
+      }
+
+      // 2. Set atribut sebelum src agar lolos autoplay policy & decoding pipeline
+      videoElement.muted = true;
+      videoElement.playsInline = true;
+      videoElement.preload = 'auto';
+
+      const srcUrl = typeof fileOrUrl === 'string'
+        ? fileOrUrl
+        : URL.createObjectURL(fileOrUrl);
+
+      if (typeof fileOrUrl !== 'string') {
+        videoElement.dataset.objectUrl = srcUrl;
+      }
+
+      let isResolved = false;
+      const cleanupListeners = () => {
+        videoElement.removeEventListener('loadeddata', onReady);
+        videoElement.removeEventListener('canplay', onReady);
+        videoElement.removeEventListener('seeked', onSeeked);
+        videoElement.removeEventListener('error', onError);
+      };
+
+      const finishResolve = () => {
+        if (isResolved) return;
+        isResolved = true;
+        cleanupListeners();
+        resolve({
+          width: videoElement.videoWidth || 1920,
+          height: videoElement.videoHeight || 1080,
+          duration: videoElement.duration || 0,
+        });
+      };
+
+      const onError = () => {
+        if (isResolved) return;
+        isResolved = true;
+        cleanupListeners();
+        const errCode = videoElement.error ? videoElement.error.code : 'unknown';
+        reject(new Error(`Failed to decode video (Error code: ${errCode}).`));
+      };
+
+      const onSeeked = () => {
+        finishResolve();
+      };
+
+      const onReady = () => {
+        if (videoElement.videoWidth === 0 || videoElement.videoHeight === 0) {
+          return;
+        }
+        // Force seek to frame 1 (0.05s) to push frame to GPU buffer
+        try {
+          videoElement.currentTime = 0.05;
+        } catch (e) {
+          finishResolve();
+        }
+        // Fallback timer in case seeked doesn't fire
+        setTimeout(() => {
+          if (videoElement.readyState >= 2 && videoElement.videoWidth > 0) {
+            finishResolve();
+          }
+        }, 200);
+      };
+
+      videoElement.addEventListener('loadeddata', onReady);
+      videoElement.addEventListener('canplay', onReady);
+      videoElement.addEventListener('seeked', onSeeked);
+      videoElement.addEventListener('error', onError, { once: true });
+
+      // Immediate check if already ready
+      if (videoElement.readyState >= 2 && videoElement.videoWidth > 0) {
+        onReady();
+      }
+
+      videoElement.src = srcUrl;
+      videoElement.load();
+
+      // Absolute safety timeout of 4 seconds so UI NEVER hangs
+      setTimeout(() => {
+        if (!isResolved) {
+          if (videoElement.videoWidth > 0) {
+            finishResolve();
+          } else {
+            onError();
+          }
+        }
+      }, 4000);
+    });
+  }
+
+  /**
+   * Set up Synchronized Dual-Video Comparison Mode (Canvas 2D Engine)
+   */
+  async setVideoComparison(beforeUrl, afterUrl) {
     this.cleanupVideoSync();
     this.mode = 'video';
     this.videoControls.style.display = 'flex';
 
-    // Master is Enhanced HD (Layer After) - provides audio
-    const master = document.createElement('video');
-    master.src = afterUrl;
-    master.className = 'comparison-media';
-    master.playsInline = true;
-    master.loop = true;
-    master.crossOrigin = 'anonymous';
-
-    // Slave is Original Low-Res (Layer Before) - always muted
-    const slave = document.createElement('video');
-    slave.src = beforeUrl;
-    slave.className = 'comparison-media';
-    slave.playsInline = true;
-    slave.loop = true;
-    slave.muted = true;
-    slave.crossOrigin = 'anonymous';
-
+    // Sembunyikan layer gambar DOM; tampilkan canvas tunggal anti-overlay clash
+    this.layerBefore.style.display = 'none';
+    this.layerAfter.style.display = 'none';
     this.layerBefore.innerHTML = '';
-    this.layerBefore.appendChild(slave);
-
     this.layerAfter.innerHTML = '';
-    this.layerAfter.appendChild(master);
+
+    if (this.canvas) {
+      this.canvas.style.display = 'block';
+      if (!this.ctx) {
+        this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
+      }
+    }
+
+    const master = document.createElement('video');
+    const slave = document.createElement('video');
+
+    // DOM Mount aktif dengan dimensi minimum (agar D3D11 / DirectComposition GPU video decoder aktif)
+    let mount = document.getElementById('videoMediaMount');
+    if (!mount) {
+      mount = document.createElement('div');
+      mount.id = 'videoMediaMount';
+      mount.style.position = 'fixed';
+      mount.style.bottom = '0';
+      mount.style.right = '0';
+      mount.style.width = '4px';
+      mount.style.height = '4px';
+      mount.style.opacity = '0.01';
+      mount.style.pointerEvents = 'none';
+      mount.style.zIndex = '-999';
+      mount.style.overflow = 'hidden';
+      document.body.appendChild(mount);
+    }
+    mount.innerHTML = '';
+    slave.style.width = '4px';
+    slave.style.height = '4px';
+    slave.style.display = 'block';
+    master.style.width = '4px';
+    master.style.height = '4px';
+    master.style.display = 'block';
+    mount.appendChild(slave);
+    mount.appendChild(master);
 
     this.masterVideo = master;
     this.slaveVideo = slave;
 
     this.container.style.display = 'block';
-    this.updatePosition(50);
+    this.updateMuteButton(true);
 
-    this.bindVideoSync(master, slave);
+    try {
+      // Tunggu kedua video tervalidasi frame pertama (PRD Seksi 4.1)
+      const [slaveMeta, masterMeta] = await Promise.all([
+        this.loadVideoSourceReady(slave, beforeUrl),
+        this.loadVideoSourceReady(master, afterUrl),
+      ]);
+
+      const w = masterMeta.width || slaveMeta.width || 1920;
+      const h = masterMeta.height || slaveMeta.height || 1080;
+
+      if (this.canvas) {
+        this.canvas.width = w;
+        this.canvas.height = h;
+        if (this.ctx) {
+          this.ctx.imageSmoothingEnabled = true;
+          this.ctx.imageSmoothingQuality = 'high';
+        }
+      }
+
+      this.timeDisplay.textContent = `00:00 / ${this.formatTime(masterMeta.duration)}`;
+
+      // Render frame pertama yang sudah terbukti siap
+      this.drawVideoFrames();
+
+      // Pasang sinkronisasi loop per-frame dan kontrol playback (PRD Seksi 4.3)
+      this.bindVideoSync(master, slave);
+
+    } catch (err) {
+      console.error('Video comparison initialization failed:', err);
+    }
   }
 
+  /**
+   * PRD Seksi 4.2 & 4.3: Menggambar frame kedua video ke Canvas dengan split perbandingan
+   */
+  drawVideoFrames() {
+    if (!this.canvas || !this.ctx || !this.masterVideo || !this.slaveVideo) return;
+
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    if (!w || !h) return;
+
+    const splitX = Math.round(w * (this.position / 100));
+
+    this.ctx.clearRect(0, 0, w, h);
+
+    // 1. Sisi Kiri: Original Low-Res (Slave)
+    if (splitX > 0 && this.slaveVideo.videoWidth > 0 && this.slaveVideo.readyState >= 2) {
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.rect(0, 0, splitX, h);
+      this.ctx.clip();
+      try {
+        this.ctx.drawImage(this.slaveVideo, 0, 0, w, h);
+      } catch (e) {}
+      this.ctx.restore();
+    }
+
+    // 2. Sisi Kanan: Wink HD Enhanced (Master)
+    if (splitX < w && this.masterVideo.videoWidth > 0 && this.masterVideo.readyState >= 2) {
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.rect(splitX, 0, w - splitX, h);
+      this.ctx.clip();
+      try {
+        this.ctx.drawImage(this.masterVideo, 0, 0, w, h);
+      } catch (e) {}
+      this.ctx.restore();
+    }
+  }
+
+  /**
+   * PRD Seksi 4.3: Loop Sinkronisasi Frame Real-Time (requestVideoFrameCallback)
+   */
   bindVideoSync(master, slave) {
-    // 1. Playback State Synchronization
+    const loopTick = () => {
+      if (!this.isLoopActive || master.paused || master.ended) {
+        this.isLoopActive = false;
+        return;
+      }
+      this.drawVideoFrames();
+      if ('requestVideoFrameCallback' in master) {
+        this.videoCallbackId = master.requestVideoFrameCallback(loopTick);
+      } else {
+        this.syncRafId = window.requestAnimationFrame(loopTick);
+      }
+    };
+
+    const startLoop = () => {
+      if (this.isLoopActive) return;
+      this.isLoopActive = true;
+      loopTick();
+    };
+
+    const stopLoop = () => {
+      this.isLoopActive = false;
+      if (this.videoCallbackId !== null && 'cancelVideoFrameCallback' in master) {
+        master.cancelVideoFrameCallback(this.videoCallbackId);
+        this.videoCallbackId = null;
+      }
+      if (this.syncRafId !== null) {
+        window.cancelAnimationFrame(this.syncRafId);
+        this.syncRafId = null;
+      }
+      this.drawVideoFrames();
+    };
+
+    // Playback State Sync
     master.addEventListener('play', () => {
       slave.play().catch(() => {});
       this.updatePlayPauseButton(true);
+      startLoop();
     });
 
     master.addEventListener('pause', () => {
       slave.pause();
       this.updatePlayPauseButton(false);
+      stopLoop();
+    });
+
+    master.addEventListener('ended', () => {
+      slave.pause();
+      this.updatePlayPauseButton(false);
+      stopLoop();
+    });
+
+    master.addEventListener('playing', () => {
+      slave.play().catch(() => {});
+      this.updatePlayPauseButton(true);
+      startLoop();
     });
 
     master.addEventListener('waiting', () => {
       slave.pause();
     });
 
-    master.addEventListener('playing', () => {
-      slave.play().catch(() => {});
-      this.updatePlayPauseButton(true);
-    });
-
-    // 2. Seeking Synchronization
-    const syncTime = () => {
+    // Seeking Synchronization (PRD: seeked redraws frame)
+    master.addEventListener('seeked', () => {
       if (Math.abs(slave.currentTime - master.currentTime) > 0.02) {
         slave.currentTime = master.currentTime;
       }
-    };
-    master.addEventListener('seeking', syncTime);
-    master.addEventListener('seeked', syncTime);
+      this.drawVideoFrames();
+    });
 
-    // 3. Playback Rate Synchronization
+    slave.addEventListener('seeked', () => {
+      this.drawVideoFrames();
+    });
+
+    // Rate change sync
     master.addEventListener('ratechange', () => {
       slave.playbackRate = master.playbackRate;
     });
 
-    // 4. Scrubber & Time Display Updates
+    // Time scrubber update & continuous drift correction
     master.addEventListener('timeupdate', () => {
-      if (!this.masterVideo || isNaN(this.masterVideo.duration)) return;
-      const cur = this.masterVideo.currentTime;
-      const dur = this.masterVideo.duration;
+      if (!master || isNaN(master.duration)) return;
+      const cur = master.currentTime;
+      const dur = master.duration;
       const pct = (cur / dur) * 100;
       this.videoScrubber.value = isNaN(pct) ? 0 : pct;
       this.timeDisplay.textContent = `${this.formatTime(cur)} / ${this.formatTime(dur)}`;
-    });
 
-    master.addEventListener('loadedmetadata', () => {
-      this.timeDisplay.textContent = `00:00 / ${this.formatTime(master.duration)}`;
-    });
-
-    // 5. Continuous Drift Correction RAF Loop
-    const syncLoop = () => {
-      if (this.masterVideo && this.slaveVideo && !this.masterVideo.paused) {
-        const drift = Math.abs(this.masterVideo.currentTime - this.slaveVideo.currentTime);
-        if (drift > this.syncThreshold) {
-          this.slaveVideo.currentTime = this.masterVideo.currentTime;
-        }
+      if (slave && Math.abs(master.currentTime - slave.currentTime) > this.syncThreshold) {
+        slave.currentTime = master.currentTime;
       }
-      this.syncRafId = requestAnimationFrame(syncLoop);
-    };
-    this.syncRafId = requestAnimationFrame(syncLoop);
-
-    // Auto play master on load
-    master.play().catch(() => {
-      // Browsers may block autoplay with sound; mute if needed or await click
-      this.updatePlayPauseButton(false);
+      this.drawVideoFrames();
     });
+
+    // Auto play master on load (muted = allowed by browser autoplay policy)
+    master.play()
+      .then(() => {
+        slave.play().catch(() => {});
+        this.updatePlayPauseButton(true);
+        startLoop();
+      })
+      .catch(() => {
+        this.updatePlayPauseButton(false);
+        this.drawVideoFrames();
+      });
   }
 
   initVideoControlEvents() {
@@ -209,8 +453,10 @@ class ComparisonSlider {
       if (!this.masterVideo) return;
       if (this.masterVideo.paused) {
         this.masterVideo.play().catch(() => {});
+        if (this.slaveVideo) this.slaveVideo.play().catch(() => {});
       } else {
         this.masterVideo.pause();
+        if (this.slaveVideo) this.slaveVideo.pause();
       }
     });
 
@@ -221,6 +467,7 @@ class ComparisonSlider {
       if (this.slaveVideo) {
         this.slaveVideo.currentTime = targetTime;
       }
+      this.drawVideoFrames();
     });
 
     if (this.btnMute) {
@@ -228,11 +475,16 @@ class ComparisonSlider {
         e.stopPropagation();
         if (!this.masterVideo) return;
         this.masterVideo.muted = !this.masterVideo.muted;
-        this.btnMute.innerHTML = this.masterVideo.muted
-          ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>`
-          : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>`;
+        this.updateMuteButton(this.masterVideo.muted);
       });
     }
+  }
+
+  updateMuteButton(isMuted) {
+    if (!this.btnMute) return;
+    this.btnMute.innerHTML = isMuted
+      ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>`
+      : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>`;
   }
 
   updatePlayPauseButton(isPlaying) {
@@ -250,9 +502,14 @@ class ComparisonSlider {
   }
 
   cleanupVideoSync() {
+    this.isLoopActive = false;
     if (this.syncRafId) {
-      cancelAnimationFrame(this.syncRafId);
+      window.cancelAnimationFrame(this.syncRafId);
       this.syncRafId = null;
+    }
+    if (this.videoCallbackId && this.masterVideo && 'cancelVideoFrameCallback' in this.masterVideo) {
+      this.masterVideo.cancelVideoFrameCallback(this.videoCallbackId);
+      this.videoCallbackId = null;
     }
     if (this.masterVideo) {
       this.masterVideo.pause();
@@ -264,10 +521,20 @@ class ComparisonSlider {
       this.slaveVideo.src = '';
       this.slaveVideo = null;
     }
+    const mount = document.getElementById('videoMediaMount');
+    if (mount) {
+      mount.innerHTML = '';
+    }
   }
 
   reset() {
     this.cleanupVideoSync();
+    if (this.canvas) {
+      this.canvas.style.display = 'none';
+      if (this.ctx) {
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      }
+    }
     this.layerBefore.innerHTML = '';
     this.layerAfter.innerHTML = '';
     this.container.style.display = 'none';

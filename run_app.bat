@@ -59,13 +59,13 @@ timeout /t 2 /nobreak >nul 2>&1 || powershell -nop -c "Start-Sleep -Seconds 2"
 :: 7. Launch UI in Chrome / Edge App Mode, or fallback to default browser
 echo [*] Launching user interface...
 if exist "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" (
-    start "" "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" --app=http://127.0.0.1:8484
+    start "" "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" --disable-http-cache --disable-direct-composition-video-overlays --app=http://127.0.0.1:8484
 ) else if exist "C:\Program Files\Google\Chrome\Application\chrome.exe" (
-    start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --app=http://127.0.0.1:8484
+    start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --disable-http-cache --disable-direct-composition-video-overlays --app=http://127.0.0.1:8484
 ) else if exist "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" (
-    start "" "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --app=http://127.0.0.1:8484
+    start "" "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --disable-http-cache --disable-direct-composition-video-overlays --app=http://127.0.0.1:8484
 ) else if exist "C:\Program Files\Microsoft\Edge\Application\msedge.exe" (
-    start "" "C:\Program Files\Microsoft\Edge\Application\msedge.exe" --app=http://127.0.0.1:8484
+    start "" "C:\Program Files\Microsoft\Edge\Application\msedge.exe" --disable-http-cache --disable-direct-composition-video-overlays --app=http://127.0.0.1:8484
 ) else (
     start http://127.0.0.1:8484
 )

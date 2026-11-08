@@ -41,6 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const btnEnhance = document.getElementById('btnEnhance');
   const btnEnhanceText = document.getElementById('btnEnhanceText');
+  const btnEnhanceIcon = document.getElementById('btnEnhanceIcon');
   const enhanceSpinner = document.getElementById('enhanceSpinner');
 
   // Export panel
@@ -71,6 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
     handle: document.getElementById('sliderHandle'),
     videoControls: document.getElementById('videoControlsBar'),
   });
+  window.sliderInstance = slider;
 
   // Check Backend Health
   async function checkHealth() {
@@ -253,7 +255,7 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     } else if (currentMode === 'video' && sampleData.video) {
       const s = sampleData.video;
-      slider.setVideoComparison(s.lowres_url, s.enhanced_url);
+      slider.setVideoComparison(s.lowres_url + '?t=' + Date.now(), s.enhanced_url + '?t=' + Date.now());
       latestOutputUrl = s.enhanced_url;
       showExportMetrics({
         resolution: `${s.lowres_res.join('x')} ➔ ${s.enhanced_res.join('x')} (${s.upscale_factor}x HD)`,
@@ -272,6 +274,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     btnEnhance.disabled = true;
     enhanceSpinner.style.display = 'block';
+    if (btnEnhanceIcon) btnEnhanceIcon.style.display = 'none';
     btnEnhanceText.textContent = 'Processing...';
 
     dropzone.style.display = 'none';
@@ -355,7 +358,9 @@ document.addEventListener('DOMContentLoaded', () => {
               activeEventSource = null;
 
               latestOutputUrl = ev.output_url;
-              slider.setVideoComparison(inputUrl, ev.output_url);
+              const freshIn = inputUrl + '?t=' + Date.now();
+              const freshOut = ev.output_url + '?t=' + Date.now();
+              slider.setVideoComparison(freshIn, freshOut);
 
               const resMeta = ev.result || {};
               showExportMetrics({
@@ -399,7 +404,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function finishProcessing() {
     btnEnhance.disabled = false;
     enhanceSpinner.style.display = 'none';
-    btnEnhanceText.textContent = '⚡ Enhance to HD';
+    if (btnEnhanceIcon) btnEnhanceIcon.style.display = 'block';
+    btnEnhanceText.textContent = 'Enhance to HD';
   }
 
   function showExportMetrics({ resolution, time, gain }) {
