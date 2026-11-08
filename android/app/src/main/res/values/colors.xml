@@ -1,0 +1,6 @@
+<resources>
+    <color name="black">#000000</color>
+    <color name="white">#FFFFFF</color>
+    <color name="card_bg">#0A0A0A</color>
+    <color name="border_glass">#27272A</color>
+</resources>

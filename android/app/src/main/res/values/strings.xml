@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Lumina HD Studio</string>
+    <string name="server_prompt_title">Server Address</string>
+    <string name="server_prompt_msg">Enter Lumina HD Studio Cloud URL or Local IP:</string>
+    <string name="btn_save">Connect</string>
+    <string name="btn_cancel">Cancel</string>
+</resources>
