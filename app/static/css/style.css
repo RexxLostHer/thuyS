@@ -1356,3 +1356,21 @@ body {
   transform: scale(var(--zoom-scale, 1)) translate(var(--pan-x, 0px), var(--pan-y, 0px));
   transition: transform 0.05s ease-out;
 }
+
+/* Ultra-HD Quality Gate Scorecard Badges & Highlights */
+.badge-grade {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+  font-size: 0.70rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  background: rgba(16, 185, 129, 0.15);
+  color: #10B981;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.highlight-pass {
+  color: #10B981 !important;
+  font-weight: 600;
+}

@@ -604,9 +604,14 @@ async def api_enhance_video(
 @app.get("/api/tasks/{task_id}/events")
 @app.get("/api/progress/{task_id}")
 async def stream_task_events(request: Request, task_id: str):
-    """SSE (Server-Sent Events) endpoint streaming real-time video processing updates."""
+    """SSE (Server-Sent Events) endpoint streaming real-time video/image processing updates."""
     if task_id not in TASKS:
-        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+        for _ in range(30):
+            if task_id in TASKS:
+                break
+            await asyncio.sleep(0.1)
+        if task_id not in TASKS:
+            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
 
     task = TASKS[task_id]
 

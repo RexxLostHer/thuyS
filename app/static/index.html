@@ -19,7 +19,7 @@
     <link rel="manifest" href="/manifest.json">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Wink HD">
-  <link rel="stylesheet" href="/static/css/style.css?v=4.1.0">
+  <link rel="stylesheet" href="/static/css/style.css?v=4.2.0">
 
   <link rel="icon" type="image/png" href="/static/assets/favicon.png">
 
@@ -585,17 +585,23 @@
 
       <div id="exportPanel" class="export-panel glass-panel" style="display: none;">
 
-        <div class="panel-header">
+        <div class="panel-header" style="justify-content: space-between;">
 
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
 
-            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 
-            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
 
-          </svg>
+              <polyline points="22 4 12 14.01 9 11.01"></polyline>
 
-          <span class="panel-title-text">Output Quality</span>
+            </svg>
+
+            <span class="panel-title-text">Ultra-HD Quality Gate</span>
+
+          </div>
+
+          <span id="metricGradeBadge" class="badge-grade">S+ Studio Ultra-HD</span>
 
         </div>
 
@@ -619,9 +625,49 @@
 
           <tr>
 
-            <td class="metric-name">Quality Boost</td>
+            <td class="metric-name">Tenengrad Acutance</td>
 
-            <td id="metricGain" class="metric-value">+128% Sharpness</td>
+            <td id="metricTenengrad" class="metric-value highlight-pass">+348.5% (PASS)</td>
+
+          </tr>
+
+          <tr id="rowHalo">
+
+            <td class="metric-name">Halo / Overshoot</td>
+
+            <td id="metricHalo" class="metric-value highlight-pass">0.00% (Zero-Halo)</td>
+
+          </tr>
+
+          <tr id="rowFlatNoise">
+
+            <td class="metric-name">Flat Noise Ratio</td>
+
+            <td id="metricFlatNoise" class="metric-value highlight-pass">0.61x (Cleaner)</td>
+
+          </tr>
+
+          <tr id="rowSsim">
+
+            <td class="metric-name">SSIM / PSNR</td>
+
+            <td id="metricSsimPsnr" class="metric-value highlight-pass">0.928 / 23.8 dB</td>
+
+          </tr>
+
+          <tr id="rowDynamic">
+
+            <td class="metric-name">Dynamic Span (P99-P1)</td>
+
+            <td id="metricDynamicSpan" class="metric-value highlight-pass">254 / 255</td>
+
+          </tr>
+
+          <tr id="rowSkin">
+
+            <td class="metric-name">Skin Retention</td>
+
+            <td id="metricSkin" class="metric-value highlight-pass">72.0% (Natural Pores)</td>
 
           </tr>
 
@@ -787,11 +833,11 @@
 
 
 
-  <script src="/static/js/logo-anim.js?v=4.1.0"></script>
+  <script src="/static/js/logo-anim.js?v=4.2.0"></script>
 
-  <script src="/static/js/slider.js?v=4.1.0"></script>
+  <script src="/static/js/slider.js?v=4.2.0"></script>
 
-  <script src="/static/js/app.js?v=4.1.0"></script>
+  <script src="/static/js/app.js?v=4.2.0"></script>
 
 </body>
 

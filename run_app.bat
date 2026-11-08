@@ -1,4 +1,5 @@
 @echo off
+setlocal EnableDelayedExpansion
 title Wink HD Enhancer
 
 :: ============================================================================
@@ -6,39 +7,42 @@ title Wink HD Enhancer
 ::                 AI Image & Video Super-Resolution Studio
 :: ============================================================================
 
-:: 1. Navigate to project root directory
-if exist "%~dp0.venv\Scripts\python.exe" (
-    cd /d "%~dp0"
-) else (
+:: 1. Navigate to project root directory reliably
+pushd "%~dp0"
+if not exist "app\main.py" (
     cd /d "C:\Users\Lenovo\.gemini\antigravity\scratch\wink_hd_enhancer"
 )
 
 :: 2. Prepend WinGet FFmpeg binary directory to PATH
-set "PATH=C:\Users\Lenovo\AppData\Local\Microsoft\WinGet\Packages\yt-dlp.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-N-127043-g5a54fcf75e-win64-gpl\bin;%PATH%"
+if exist "C:\Users\Lenovo\AppData\Local\Microsoft\WinGet\Packages\yt-dlp.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-N-127043-g5a54fcf75e-win64-gpl\bin" (
+    set "PATH=C:\Users\Lenovo\AppData\Local\Microsoft\WinGet\Packages\yt-dlp.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-N-127043-g5a54fcf75e-win64-gpl\bin;%PATH%"
+)
 
 :: 3. Select python executable
-set "PYTHON_EXE=.venv\Scripts\python.exe"
+set "PYTHON_EXE=C:\Users\Lenovo\.gemini\antigravity\scratch\wink_hd_enhancer\.venv\Scripts\python.exe"
 if not exist "%PYTHON_EXE%" (
-    set "PYTHON_EXE=C:\Users\Lenovo\.gemini\antigravity\scratch\wink_hd_enhancer\.venv\Scripts\python.exe"
-)
-if not exist "%PYTHON_EXE%" (
-    where py.exe >nul 2>&1
-    if not errorlevel 1 (
-        set "PYTHON_EXE=py -3"
+    if exist ".venv\Scripts\python.exe" (
+        set "PYTHON_EXE=.venv\Scripts\python.exe"
     ) else (
-        set "PYTHON_EXE=python"
+        where py.exe >nul 2>&1
+        if not errorlevel 1 (
+            set "PYTHON_EXE=py -3"
+        ) else (
+            set "PYTHON_EXE=python"
+        )
     )
 )
 
 :: 4. Check if server is already running on port 8484
 netstat -ano | findstr /R /C:":8484 .*LISTENING" >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
+    echo [*] Wink HD Enhancer backend is already active on port 8484.
     goto launch_ui
 )
 
 :: 5. Launch Uvicorn server in background
 echo [*] Starting Wink HD Enhancer backend on http://127.0.0.1:8484 ...
-start "" /B %PYTHON_EXE% -m uvicorn app.main:app --host 0.0.0.0 --port 8484
+start "" /B "%PYTHON_EXE%" -m uvicorn app.main:app --host 0.0.0.0 --port 8484
 
 :: 6. Wait 2 seconds for server initialization
 timeout /t 2 /nobreak >nul 2>&1 || powershell -nop -c "Start-Sleep -Seconds 2"
@@ -58,4 +62,5 @@ if exist "C:\Program Files\Google\Chrome\Application\chrome.exe" (
     start http://127.0.0.1:8484
 )
 
-exit 0
+popd
+exit /b 0
