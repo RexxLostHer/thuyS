@@ -100,6 +100,33 @@ async def serve_index():
     return FileResponse(str(index_file))
 
 
+@app.get("/manifest.json")
+async def serve_manifest():
+    """Serve PWA manifest.json."""
+    manifest_file = STATIC_DIR / "manifest.json"
+    if manifest_file.exists():
+        return FileResponse(str(manifest_file), media_type="application/manifest+json")
+    raise HTTPException(status_code=404, detail="manifest.json not found")
+
+
+@app.get("/sw.js")
+async def serve_service_worker():
+    """Serve PWA service worker sw.js."""
+    sw_file = STATIC_DIR / "sw.js"
+    if sw_file.exists():
+        return FileResponse(str(sw_file), media_type="application/javascript")
+    raise HTTPException(status_code=404, detail="sw.js not found")
+
+
+@app.get("/assets/{path:path}")
+async def serve_root_assets(path: str):
+    """Serve direct /assets/... requests for PWA icons and fonts."""
+    target = STATIC_DIR / "assets" / path
+    if target.exists() and target.is_file():
+        return FileResponse(str(target))
+    raise HTTPException(status_code=404, detail=f"Asset '{path}' not found")
+
+
 @app.get("/api/health")
 async def health_check():
     """

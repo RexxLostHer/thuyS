@@ -742,3 +742,36 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
 });
+
+
+  // PWA Service Worker & Install Flow
+  let deferredInstallPrompt = null;
+  const btnInstallPwa = document.getElementById('btnInstallPwa');
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch((err) => {
+        console.warn('SW registration failed:', err);
+      });
+    });
+  }
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+  });
+
+  if (btnInstallPwa) {
+    btnInstallPwa.addEventListener('click', async () => {
+      if (deferredInstallPrompt) {
+        deferredInstallPrompt.prompt();
+        const choice = await deferredInstallPrompt.userChoice;
+        if (choice.outcome === 'accepted') {
+          btnInstallPwa.style.display = 'none';
+        }
+        deferredInstallPrompt = null;
+      } else {
+        alert('Panduan Install ke Layar HP:\n\n1. Buka link ini di Google Chrome di HP Anda.\n2. Ketuk ikon titik tiga (⋮) di pojok kanan atas Chrome.\n3. Pilih "Install aplikasi" atau "Tambahkan ke Layar Utama".\n4. Ikon Lumina HD Studio akan langsung muncul di menu aplikasi HP Anda!');
+      }
+    });
+  }
