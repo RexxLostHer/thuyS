@@ -33,6 +33,11 @@ htmlcov/
 .tox/
 .nox/
 
+# Models & Weights
+models/*.pth
+models/*.onnx
+!models/.gitkeep
+
 # Internal agent data & logs
 .agents/
 *.log
@@ -42,6 +47,7 @@ launcher_test.log
 media/*
 !media/.gitkeep
 out_odd_*.mp4
+samples/test_*.png
 
 # Environment variables & secrets
 .env
