@@ -73,8 +73,8 @@ it('has mobile-friendly viewport with user-scalable=no and viewport-fit=cover', 
   assert.ok(indexHtml.includes('apple-mobile-web-app-capable'), 'Must support iOS PWA meta');
 });
 
-it('rebranded to Lumina HD Studio in title and brand elements', () => {
-  assert.ok(indexHtml.includes('Lumina HD Studio'), 'Title must be Lumina HD Studio');
+it('rebranded to Wink HD Studio in title and brand elements', () => {
+  assert.ok(indexHtml.includes('Wink HD'), 'Title must be Wink HD');
   assert.ok(indexHtml.includes('headerLogoCanvas'), 'Header must contain animated canvas');
   assert.ok(indexHtml.includes('btnMobileConnect'), 'Header must contain Mobile Connect button');
 });

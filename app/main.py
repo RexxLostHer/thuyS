@@ -55,7 +55,7 @@ except ImportError:
 TASKS: Dict[str, Dict[str, Any]] = {}
 
 app = FastAPI(
-    title="Lumina HD Studio API",
+    title="Wink HD Enhancer API",
     description="Local AI Super-Resolution and Video/Photo Enhancement Engine",
     version="2.0.0",
 )
@@ -157,7 +157,7 @@ async def health_check():
         },
         "version": "1.0.0",
         "app": "Wink HD Enhancer",
-        "brand": "Lumina HD Studio",
+        "brand": "Wink HD Studio",
     }
 
 

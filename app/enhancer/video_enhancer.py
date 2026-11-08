@@ -146,8 +146,8 @@ def process_video_frame(
     if face_retouch > 0.0:
         out = apply_portrait_retouch(out, strength=face_retouch)
 
-    if upscale_factor > 1:
-        out = apply_upscale(out, scale_factor=upscale_factor)
+    if upscale_factor >= 1:
+        out = apply_upscale(out, scale_factor=upscale_factor, fast_mode=True)
 
     if target_size is not None and (out.shape[1] != target_size[0] or out.shape[0] != target_size[1]):
         out = cv2.resize(out, target_size, interpolation=cv2.INTER_LANCZOS4)

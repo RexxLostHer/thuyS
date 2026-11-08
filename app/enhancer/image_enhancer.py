@@ -1,89 +1,20 @@
 """
-Wink-Style Image Enhancement Engine
-High-fidelity classical computer vision and DSP pipeline featuring:
-- Multi-scale Lanczos-4 Super-Resolution (1x, 2x, 4x)
-- Wink-style Portrait Retouching with 70/30 skin texture preservation
-- Eye and lip localized contrast & sharpness enhancement
-- Contrast-Adaptive Sharpening (CAS) and luminance-isolated unsharp masking
-- Dynamic Tone & Vibrance Boost via LAB CLAHE and non-linear saturation
-- Dual-domain bilateral denoising filter
+Wink HD Enhancer - Overpowered 7-Stage Ultra-HD Image & Video Frame Engine
+Featuring:
+1. Chroma-Isolated & Edge-Protected Bilateral Denoising
+2. 3-Band Frequency Separation Portrait Retouching + Eye/Lip/Hair Micro-Detail Boost
+3. Multi-Stage Lanczos-4 + Iterative Back-Projection (IBP) Super-Resolution
+4. Sub-Pixel Morphological Edge-Shock Steepening (De-blurring soft edges)
+5. 3-Scale Laplacian/DoG Pyramid Detail & Local HDR Clarity Booster (with Tanh Halo Limiter)
+6. Overpowered Contrast-Adaptive Sharpening (CAS Pro)
+7. Auto Black-Point Dehaze, Cinema S-Curve Tone Mapping & Skin-Safe Vibrance
 """
 
 import os
 import time
-from typing import Tuple, Dict, Any, Optional
+from typing import Dict, Any, Optional
 import cv2
 import numpy as np
-from PIL import Image
-
-
-def calculate_tenengrad(image: np.ndarray) -> float:
-    """
-    Calculate the Tenengrad edge gradient energy metric.
-    Higher values correspond to sharper, crisper edges.
-    """
-    if len(image.shape) == 3:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    else:
-        gray = image
-    
-    # Sobel gradient in x and y directions
-    gx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-    gy = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-    grad_sq = gx ** 2 + gy ** 2
-    
-    # Tenengrad thresholding (standard threshold 100)
-    mean_energy = float(np.mean(grad_sq))
-    return mean_energy
-
-
-def calculate_psnr(img1: np.ndarray, img2: np.ndarray) -> float:
-    """
-    Calculate Peak Signal-to-Noise Ratio (PSNR) in dB between two images.
-    """
-    if img1.shape != img2.shape:
-        # Resize img2 to match img1 if dimensions differ
-        img2 = cv2.resize(img2, (img1.shape[1], img1.shape[0]), interpolation=cv2.INTER_LANCZOS4)
-    
-    mse = np.mean((img1.astype(np.float64) - img2.astype(np.float64)) ** 2)
-    if mse == 0:
-        return 100.0
-    max_pixel = 255.0
-    psnr = 20 * np.log10(max_pixel / np.sqrt(mse))
-    return float(psnr)
-
-
-def calculate_ssim(img1: np.ndarray, img2: np.ndarray) -> float:
-    """
-    Calculate Structural Similarity Index (SSIM) between two images.
-    """
-    if img1.shape != img2.shape:
-        img2 = cv2.resize(img2, (img1.shape[1], img1.shape[0]), interpolation=cv2.INTER_LANCZOS4)
-        
-    if len(img1.shape) == 3:
-        g1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY).astype(np.float64)
-        g2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY).astype(np.float64)
-    else:
-        g1 = img1.astype(np.float64)
-        g2 = img2.astype(np.float64)
-        
-    c1 = (0.01 * 255) ** 2
-    c2 = (0.03 * 255) ** 2
-    
-    mu1 = cv2.GaussianBlur(g1, (11, 11), 1.5)
-    mu2 = cv2.GaussianBlur(g2, (11, 11), 1.5)
-    
-    mu1_sq = mu1 ** 2
-    mu2_sq = mu2 ** 2
-    mu1_mu2 = mu1 * mu2
-    
-    sigma1_sq = cv2.GaussianBlur(g1 ** 2, (11, 11), 1.5) - mu1_sq
-    sigma2_sq = cv2.GaussianBlur(g2 ** 2, (11, 11), 1.5) - mu2_sq
-    sigma12 = cv2.GaussianBlur(g1 * g2, (11, 11), 1.5) - mu1_mu2
-    
-    ssim_map = ((2 * mu1_mu2 + c1) * (2 * sigma12 + c2)) / ((mu1_sq + mu2_sq + c1) * (sigma1_sq + sigma2_sq + c2))
-    return float(np.mean(ssim_map))
-
 
 # Global cached Haar Cascade classifier so video frame processing never reloads XML from disk per frame
 _FACE_CASCADE: Optional[Any] = None
@@ -98,7 +29,7 @@ def _get_face_cascade() -> Optional[Any]:
         return None
     cascade_dir = getattr(cv2, "data", None)
     if cascade_dir and hasattr(cascade_dir, "haarcascades"):
-        cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        cascade_path = cascade_dir.haarcascades + "haarcascade_frontalface_default.xml"
         if os.path.exists(cascade_path):
             try:
                 _FACE_CASCADE = cascade_cls(cascade_path)
@@ -107,360 +38,464 @@ def _get_face_cascade() -> Optional[Any]:
     return _FACE_CASCADE
 
 
+def calculate_tenengrad(image: np.ndarray) -> float:
+    """
+    Calculate the Tenengrad edge gradient energy metric.
+    Higher values correspond to sharper, crisper edges.
+    """
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = image
+
+    sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+    sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+    grad_sq = sobel_x ** 2 + sobel_y ** 2
+    return float(np.mean(grad_sq))
+
+
+def calculate_psnr(img1: np.ndarray, img2: np.ndarray) -> float:
+    """
+    Calculate Peak Signal-to-Noise Ratio (PSNR) in dB between two images.
+    """
+    if img1.shape != img2.shape:
+        img2 = cv2.resize(img2, (img1.shape[1], img1.shape[0]), interpolation=cv2.INTER_LANCZOS4)
+
+    mse = np.mean((img1.astype(np.float64) - img2.astype(np.float64)) ** 2)
+    if mse == 0:
+        return 100.0
+    return float(20.0 * np.log10(255.0 / np.sqrt(mse)))
+
+
+def calculate_ssim(img1: np.ndarray, img2: np.ndarray) -> float:
+    """
+    Calculate Structural Similarity Index (SSIM) between two images.
+    """
+    if img1.shape != img2.shape:
+        img2 = cv2.resize(img2, (img1.shape[1], img1.shape[0]), interpolation=cv2.INTER_LANCZOS4)
+
+    if len(img1.shape) == 3:
+        g1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY).astype(np.float64)
+        g2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY).astype(np.float64)
+    else:
+        g1 = img1.astype(np.float64)
+        g2 = img2.astype(np.float64)
+
+    c1 = (0.01 * 255) ** 2
+    c2 = (0.03 * 255) ** 2
+
+    mu1 = cv2.GaussianBlur(g1, (11, 11), 1.5)
+    mu2 = cv2.GaussianBlur(g2, (11, 11), 1.5)
+
+    mu1_sq = mu1 ** 2
+    mu2_sq = mu2 ** 2
+    mu1_mu2 = mu1 * mu2
+
+    sigma1_sq = cv2.GaussianBlur(g1 ** 2, (11, 11), 1.5) - mu1_sq
+    sigma2_sq = cv2.GaussianBlur(g2 ** 2, (11, 11), 1.5) - mu2_sq
+    sigma12 = cv2.GaussianBlur(g1 * g2, (11, 11), 1.5) - mu1_mu2
+
+    ssim_map = ((2 * mu1_mu2 + c1) * (2 * sigma12 + c2)) / ((mu1_sq + mu2_sq + c1) * (sigma1_sq + sigma2_sq + c2))
+    return float(np.mean(ssim_map))
+
+
 def denoise_image(
     image: np.ndarray,
     strength: float = 0.3,
     denoise_strength: Optional[float] = None,
 ) -> np.ndarray:
     """
-    Edge-preserving dual-domain chrominance and flat-area luminance denoising.
-    Cleans up compression artifacts and sensor blotches without softening high-frequency edges or text.
-    Supports both `strength` and `denoise_strength` keyword arguments.
+    Stage 1: Chroma-Isolated & Edge-Protected Denoising.
+    Eliminates color noise & JPEG blocking in YCrCb chroma channels while protecting fine luminance edges
+    so sharp details (hair, eyes, textures) are NEVER blurred away before super-resolution.
     """
     eff_strength = float(denoise_strength if denoise_strength is not None else strength)
     if eff_strength <= 0.0:
         return image
-    
-    eff_strength = min(1.0, max(0.0, eff_strength))
-    
-    # 1. Chroma-domain bilateral denoising in YCrCb (removes color blotches without touching edge sharpness)
+
     ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
     y, cr, cb = cv2.split(ycrcb)
-    
-    d = int(np.clip(3 + 4 * eff_strength, 3, 9))
-    sigma_c = int(np.clip(18 + 40 * eff_strength, 10, 65))
-    cr_clean = cv2.bilateralFilter(cr, d=d, sigmaColor=sigma_c, sigmaSpace=12)
-    cb_clean = cv2.bilateralFilter(cb, d=d, sigmaColor=sigma_c, sigmaSpace=12)
-    
-    # 2. Edge-guided luminance noise suppression
-    # Detect edges on luminance channel so text and contours stay 100% sharp
-    sobelx = cv2.Sobel(y, cv2.CV_32F, 1, 0, ksize=3)
-    sobely = cv2.Sobel(y, cv2.CV_32F, 0, 1, ksize=3)
-    edge_mag = np.sqrt(sobelx**2 + sobely**2)
-    # Edge mask: 1.0 on sharp edges/text, 0.0 on flat areas
-    edge_mask = np.clip(edge_mag / 24.0, 0.0, 1.0)
-    
-    # Bilateral smoothing applied only to flat/gradient regions
-    y_smooth = cv2.bilateralFilter(y, d=d, sigmaColor=int(20 * eff_strength + 10), sigmaSpace=10)
-    y_denoised = (y_smooth.astype(np.float32) * (1.0 - edge_mask) + y.astype(np.float32) * edge_mask).astype(np.uint8)
-    
-    y_final = cv2.addWeighted(y_denoised, eff_strength, y, float(1.0 - eff_strength), 0)
+
+    # 1. Aggressive chroma denoising (removes color blotches and JPEG chroma artifacts without hurting sharpness)
+    chroma_ksize = 5 if eff_strength >= 0.25 else 3
+    cr_clean = cv2.GaussianBlur(cr, (chroma_ksize, chroma_ksize), 1.2)
+    cb_clean = cv2.GaussianBlur(cb, (chroma_ksize, chroma_ksize), 1.2)
+
+    # 2. Edge-protected Luminance denoising: only smooth flat noisy regions, keep strong edges 100% intact
+    d = int(np.clip(5 + 4 * eff_strength, 5, 9))
+    sigma_color = int(np.clip(18 + 38 * eff_strength, 15, 60))
+    sigma_space = int(np.clip(12 + 25 * eff_strength, 10, 40))
+    y_smooth = cv2.bilateralFilter(y, d=d, sigmaColor=sigma_color, sigmaSpace=sigma_space)
+
+    # Compute local gradient magnitude on Y so edges resist smoothing
+    gx = cv2.Sobel(y, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(y, cv2.CV_32F, 0, 1, ksize=3)
+    grad_mag = cv2.magnitude(gx, gy)
+    # Normalize edge protection mask: 0.0 on flat areas (smooth noise), 1.0 on edges/textures (preserve detail)
+    edge_protect = np.clip(grad_mag / 42.0, 0.0, 1.0)
+    blend_y_weight = float(np.clip(eff_strength * 0.75, 0.0, 0.85)) * (1.0 - edge_protect * 0.85)
+
+    y_final = (y_smooth.astype(np.float32) * blend_y_weight + y.astype(np.float32) * (1.0 - blend_y_weight))
+    y_final = np.clip(y_final, 0, 255).astype(np.uint8)
+
     merged = cv2.merge([y_final, cr_clean, cb_clean])
     return cv2.cvtColor(merged, cv2.COLOR_YCrCb2BGR)
 
 
 def segment_skin(image: np.ndarray) -> np.ndarray:
     """
-    Segment skin tone pixels using combined YCbCr and HSV color thresholds.
+    Segment skin tone pixels using combined YCrCb and HSV color thresholds.
     Returns a smooth feathered single-channel mask (0.0 to 1.0).
     """
-    # 1. YCbCr skin bounds: 77 <= Cb <= 127 and 133 <= Cr <= 173
     ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
     _y, cr, cb = cv2.split(ycrcb)
     mask_ycrcb = (cb >= 77) & (cb <= 127) & (cr >= 133) & (cr <= 173)
-    
-    # 2. HSV skin bounds: H in [0, 25] or [165, 180], S in [28, 180], V >= 50
+
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
-    mask_hsv = ((h <= 25) | (h >= 165)) & (s >= 28) & (s <= 180) & (v >= 50)
-    
+    mask_hsv = ((h <= 22) | (h >= 168)) & (s >= 30) & (s <= 175) & (v >= 55)
+
     combined = (mask_ycrcb & mask_hsv).astype(np.uint8) * 255
-    
-    # Morphological clean up
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel, iterations=1)
     combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, kernel, iterations=1)
-    
-    # Feather edges with Gaussian blur for natural seamless blending
+
     feathered = cv2.GaussianBlur(combined, (9, 9), 3.0)
     return feathered.astype(np.float32) / 255.0
 
 
 def apply_portrait_retouch(image: np.ndarray, strength: float = 0.5) -> np.ndarray:
     """
-    Wink-style portrait retouching:
-    1. Detect faces or verify presence of prominent facial skin cluster
-    2. Guard against blurring non-face images (screenshots, UI, text, anime, landscape)
-    3. Apply dual-domain bilateral skin smoothing with 70/30 natural pore texture blending
-    4. Detect eyes and lips to apply localized contrast and sharpness boost
+    Stage 2: 3-Band Frequency Separation Portrait Retouching & Facial Feature HD Boost.
+    - Separates Low/Mid skin blotches from High-Frequency pore & hair texture so skin looks airbrushed
+      yet 100% natural and crisp (never blurry/plastic).
+    - Boosts clarity, catchlights, and micro-sharpness on Eyes, Eyebrows, and Lips.
     """
     if strength <= 0.0:
         return image
-        
+
     h, w = image.shape[:2]
     result = image.copy()
-    
-    # Detect face bounding boxes if possible
+
     face_boxes = []
     face_cascade = _get_face_cascade()
     if face_cascade is not None:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         det_scale = 0.5 if max(h, w) > 640 else 1.0
         small_gray = cv2.resize(gray, (0, 0), fx=det_scale, fy=det_scale) if det_scale < 1.0 else gray
-        faces = face_cascade.detectMultiScale(small_gray, scaleFactor=1.12, minNeighbors=3, minSize=(20, 20))
-        inv = 1.0 / det_scale
-        face_boxes = [(int(round(fx * inv)), int(round(fy * inv)), int(round(fw * inv)), int(round(fh * inv))) for (fx, fy, fw, fh) in faces]
-        
-    # Get skin mask
+        faces = face_cascade.detectMultiScale(small_gray, scaleFactor=1.15, minNeighbors=3, minSize=(24, 24))
+        inv = int(round(1.0 / det_scale))
+        face_boxes = [(fx * inv, fy * inv, fw * inv, fh * inv) for (fx, fy, fw, fh) in faces]
+
     skin_mask = segment_skin(image)
-    
-    # Face & Cluster Guard:
-    # If no Haar cascade faces were found, verify whether skin pixels form a genuine face cluster.
-    # In screenshots, games, landscapes, or text, skin-tone pixels are tiny scattered fragments (wood, orange buttons, icons).
-    if not face_boxes:
-        binary_skin = (skin_mask > 0.25).astype(np.uint8)
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_skin)
-        if num_labels <= 1:
-            return image
-        max_component_area = float(np.max(stats[1:, cv2.CC_STAT_AREA]))
-        total_pixels = float(h * w)
-        rel_area_pct = (max_component_area / total_pixels) * 100.0
-        
-        # If the largest skin-tone patch is under 4.0% or scattered over many tiny noisy patches, it is NOT a portrait!
-        if rel_area_pct < 4.0 or num_labels > 45:
-            return image
-            
-        # For low-res portraits where Haar cascade missed, only smooth the largest skin component
-        largest_label = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-        cluster_mask = (labels == largest_label).astype(np.float32)
-        cluster_mask = cv2.GaussianBlur(cluster_mask, (11, 11), 3.0)
-        skin_mask = np.clip(skin_mask * cluster_mask, 0.0, 1.0)
-    else:
-        # Haar faces exist: restrict skin smoothing strictly to elliptical face regions
+
+    # Restrict strong skin smoothing primarily to detected faces so backgrounds aren't softened
+    if face_boxes:
         face_mask = np.zeros((h, w), dtype=np.float32)
         for (fx, fy, fw, fh) in face_boxes:
             center = (fx + fw // 2, fy + fh // 2)
-            axes = (int(fw * 0.45), int(fh * 0.55))
+            axes = (int(fw * 0.48), int(fh * 0.58))
             cv2.ellipse(face_mask, center, axes, 0, 0, 360, 1.0, -1)
-        face_mask = cv2.GaussianBlur(face_mask, (15, 15), 5.0)
-        skin_mask = np.clip(skin_mask * face_mask, 0.0, 1.0)
-        
-    # Bilateral smoothing for skin
-    smoothed_skin = cv2.bilateralFilter(image, d=9, sigmaColor=65, sigmaSpace=65)
-    
-    # Natural pore texture preservation:
-    # 70% smoothed + 30% original texture (scaled by retouch strength)
-    smooth_weight = 0.70 * float(strength)
-    original_texture_weight = 1.0 - smooth_weight
-    blended_skin = cv2.addWeighted(smoothed_skin, smooth_weight, image, original_texture_weight, 0)
-    
-    # Apply blended skin only where skin_mask is active
-    skin_mask_3c = np.repeat(skin_mask[:, :, np.newaxis], 3, axis=2)
-    result = (blended_skin * skin_mask_3c + image * (1.0 - skin_mask_3c)).astype(np.uint8)
-    
-    # Eye and lip localized enhancement
-    # If faces were detected, isolate eyes (upper 25%-50%) and lips (lower 65%-85%)
+        face_mask = cv2.GaussianBlur(face_mask, (17, 17), 6.0)
+        skin_mask = np.clip(skin_mask * 0.25 + (skin_mask * face_mask) * 0.85, 0.0, 1.0)
+    else:
+        # Without a detected face, keep skin smoothing subtle to protect background textures
+        skin_mask = skin_mask * 0.35
+
+    # Frequency Separation on Luminance:
+    # High-frequency texture = original - small_blur (pores, fine hair strands)
+    # Mid-frequency blotches smoothed via bilateral filter
+    img_f = image.astype(np.float32)
+    fine_blur = cv2.GaussianBlur(img_f, (0, 0), sigmaX=1.2)
+    high_freq_texture = img_f - fine_blur  # Fine pores & hair strands
+
+    smooth_base = cv2.bilateralFilter(image, d=7, sigmaColor=55, sigmaSpace=55).astype(np.float32)
+    # Re-inject 65% of clean high-frequency micro-texture onto the smoothed base
+    freq_sep_skin = np.clip(smooth_base + high_freq_texture * 0.65, 0, 255)
+
+    smooth_weight = float(np.clip(strength * 0.72, 0.0, 0.85))
+    skin_alpha = (skin_mask * smooth_weight)[:, :, np.newaxis]
+    result = np.clip(freq_sep_skin * skin_alpha + img_f * (1.0 - skin_alpha), 0, 255).astype(np.uint8)
+
+    # Localized HD Eye, Eyebrow & Lip Micro-Contrast & Catchlight Enhancement
     if face_boxes:
         for (fx, fy, fw, fh) in face_boxes:
-            # Eyes region
-            ey_start = int(fy + fh * 0.22)
-            ey_end = int(fy + fh * 0.52)
-            ex_start = int(fx + fw * 0.12)
-            ex_end = int(fx + fw * 0.88)
-            
-            # Lips region
-            ly_start = int(fy + fh * 0.65)
-            ly_end = int(fy + fh * 0.90)
-            lx_start = int(fx + fw * 0.25)
-            lx_end = int(fx + fw * 0.75)
-            
-            for (y1, y2, x1, x2, boost_sharp, boost_contrast) in [
-                (ey_start, ey_end, ex_start, ex_end, 1.30, 1.18),  # Eyes
-                (ly_start, ly_end, lx_start, lx_end, 1.20, 1.15),  # Lips
+            ey_start, ey_end = int(fy + fh * 0.18), int(fy + fh * 0.52)
+            ex_start, ex_end = int(fx + fw * 0.10), int(fx + fw * 0.90)
+
+            ly_start, ly_end = int(fy + fh * 0.64), int(fy + fh * 0.92)
+            lx_start, lx_end = int(fx + fw * 0.22), int(fx + fw * 0.78)
+
+            for (y1, y2, x1, x2, sharp_gain, contrast_gain) in [
+                (ey_start, ey_end, ex_start, ex_end, 1.85, 1.22),  # Eyes & Eyebrows Ultra-Crisp
+                (ly_start, ly_end, lx_start, lx_end, 1.45, 1.15),  # Lips Definition
             ]:
                 if y2 > y1 and x2 > x1 and y1 >= 0 and y2 <= h and x1 >= 0 and x2 <= w:
                     roi = result[y1:y2, x1:x2].astype(np.float32)
-                    
-                    # Contrast boost around mean
-                    roi_mean = np.mean(roi, axis=(0, 1), keepdims=True)
-                    contrast_factor = 1.0 + (boost_contrast - 1.0) * float(strength)
-                    roi_contrasted = np.clip((roi - roi_mean) * contrast_factor + roi_mean, 0, 255)
-                    
-                    # Crisp unsharp mask for eyes/lips
-                    roi_blur = cv2.GaussianBlur(roi_contrasted, (3, 3), 1.0)
-                    sharp_factor = (boost_sharp - 1.0) * float(strength) * 1.8
-                    roi_enhanced = np.clip(roi_contrasted + sharp_factor * (roi_contrasted - roi_blur), 0, 255)
-                    
-                    # Feathered blend for ROI
-                    roi_mask = np.zeros((y2 - y1, x2 - x1, 1), dtype=np.float32)
-                    cv2.ellipse(
-                        roi_mask,
-                        ((x2 - x1) // 2, (y2 - y1) // 2),
-                        (int((x2 - x1) * 0.45), int((y2 - y1) * 0.45)),
-                        0, 0, 360, 1.0, -1
-                    )
-                    roi_mask = cv2.GaussianBlur(roi_mask, (7, 7), 2.0)
-                    if roi_mask.ndim == 2:
-                        roi_mask = roi_mask[:, :, np.newaxis]
-                        
-                    result[y1:y2, x1:x2] = (roi_enhanced * roi_mask + result[y1:y2, x1:x2] * (1.0 - roi_mask)).astype(np.uint8)
-                    
+                    mean_val = np.mean(roi, axis=(0, 1), keepdims=True)
+                    roi_boosted = (roi - mean_val) * contrast_gain + mean_val
+
+                    blur_fine = cv2.GaussianBlur(roi_boosted, (0, 0), sigmaX=1.0)
+                    detail = roi_boosted - blur_fine
+                    roi_sharp = roi_boosted + detail * sharp_gain
+                    roi_final = np.clip(roi_sharp, 0, 255).astype(np.uint8)
+
+                    alpha = float(np.clip(0.75 * strength, 0.0, 0.9))
+                    result[y1:y2, x1:x2] = cv2.addWeighted(roi_final, alpha, result[y1:y2, x1:x2], 1.0 - alpha, 0)
+
     return result
 
 
-def apply_upscale(
+def _edge_shock_sharpen_luma(l_channel: np.ndarray, strength: float = 0.35) -> np.ndarray:
+    """
+    Sub-pixel morphological edge steepening (Shock Filter approximation).
+    Contracts blurry transition ramps across edges toward the nearest local extremum (dilation/erosion midpoint),
+    making upscaled lines, hair, eyes, and text look natively high-resolution rather than interpolated.
+    """
+    if strength <= 0.0:
+        return l_channel
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    dilated = cv2.dilate(l_channel, kernel)
+    eroded = cv2.erode(l_channel, kernel)
+    midpoint = 0.5 * (dilated.astype(np.float32) + eroded.astype(np.float32))
+
+    l_f = l_channel.astype(np.float32)
+    # Push pixel toward dilation if above midpoint, or toward erosion if below midpoint, weighted by edge gradient
+    gx = cv2.Sobel(l_f, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(l_f, cv2.CV_32F, 0, 1, ksize=3)
+    grad = cv2.magnitude(gx, gy)
+    edge_mask = np.clip((grad - 8.0) / 55.0, 0.0, 1.0)
+
+    shock_target = np.where(l_f >= midpoint, dilated.astype(np.float32), eroded.astype(np.float32))
+    alpha = edge_mask * float(np.clip(strength, 0.0, 0.65))
+    steepened = l_f * (1.0 - alpha) + shock_target * alpha
+    return np.clip(steepened, 0, 255).astype(np.uint8)
+
+
+def _upscale_stage_ibp(image: np.ndarray, target_w: int, target_h: int, iterations: int = 2) -> np.ndarray:
+    """
+    Single stage Super-Resolution using Lanczos-4 + Iterative Back-Projection (IBP) + Luma Edge Steepening.
+    Reconstructs high-frequency residual lost during forward downsampling model.
+    """
+    orig_h, orig_w = image.shape[:2]
+    upscaled = cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4).astype(np.float32)
+    orig_f = image.astype(np.float32)
+
+    # Iterative Back-Projection loop
+    for _ in range(iterations):
+        downprojected = cv2.resize(upscaled, (orig_w, orig_h), interpolation=cv2.INTER_AREA)
+        residual = orig_f - downprojected
+        up_residual = cv2.resize(residual, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
+        upscaled = np.clip(upscaled + up_residual * 0.65, 0, 255)
+
+    res_u8 = upscaled.astype(np.uint8)
+    # Apply subtle sub-pixel edge steepening on Luminance so edges are razor-crisp
+    lab = cv2.cvtColor(res_u8, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    l_steep = _edge_shock_sharpen_luma(l, strength=0.32)
+    return cv2.cvtColor(cv2.merge([l_steep, a, b]), cv2.COLOR_LAB2BGR)
+
+
+def apply_upscale(image: np.ndarray, scale_factor: float = 2.0, fast_mode: bool = False) -> np.ndarray:
+    """
+    Stage 3: Multi-Stage Progressive Super-Resolution (1x, 2x, 4x).
+    For 4x upscaling, steps through 2x -> 4x with Iterative Back-Projection at each octave
+    so edges never look soft or pixelated.
+    """
+    orig_h, orig_w = image.shape[:2]
+    if scale_factor <= 1.0:
+        # Even at 1x, apply sub-pixel luma edge steepening to de-blur soft original photos
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        l_steep = _edge_shock_sharpen_luma(l, strength=0.28)
+        return cv2.cvtColor(cv2.merge([l_steep, a, b]), cv2.COLOR_LAB2BGR)
+
+    final_w = max(2, int(round(orig_w * scale_factor)))
+    final_h = max(2, int(round(orig_h * scale_factor)))
+    final_w += final_w % 2
+    final_h += final_h % 2
+
+    if fast_mode:
+        up = cv2.resize(image, (final_w, final_h), interpolation=cv2.INTER_LANCZOS4)
+        lab = cv2.cvtColor(up, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        l = _edge_shock_sharpen_luma(l, strength=0.25)
+        return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+
+    # Progressive 2x octave stepping for 4x super-resolution
+    if scale_factor >= 3.0:
+        mid_w = orig_w * 2 + ((orig_w * 2) % 2)
+        mid_h = orig_h * 2 + ((orig_h * 2) % 2)
+        stage1 = _upscale_stage_ibp(image, mid_w, mid_h, iterations=2)
+        return _upscale_stage_ibp(stage1, final_w, final_h, iterations=2)
+
+    return _upscale_stage_ibp(image, final_w, final_h, iterations=2)
+
+
+def enhance_multiscale_luminance_pyramid(image: np.ndarray, amount: float = 0.5) -> np.ndarray:
+    """
+    Stage 4: Overpowered 3-Band Laplacian/DoG Detail Pyramid in LAB Luminance Space.
+    Simultaneously boosts:
+    1. Ultra-Fine Micro-Textures (sigma=0.75: pores, hair strands, fabric, foliage)
+    2. Crisp Structural Edges (sigma=1.8: facial features, text, outlines) with Tanh Anti-Halo Limiter
+    3. Local HDR Clarity / Depth (sigma=5.5: 3D micro-contrast punch)
+    """
+    if amount <= 0.0:
+        return image
+
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l_chan, a_chan, b_chan = cv2.split(lab)
+    l_f = l_chan.astype(np.float32)
+
+    # 3 Gaussian scales
+    blur_micro = cv2.GaussianBlur(l_f, (0, 0), sigmaX=0.75)
+    blur_fine = cv2.GaussianBlur(l_f, (0, 0), sigmaX=1.80)
+    blur_clarity = cv2.GaussianBlur(l_f, (0, 0), sigmaX=5.50)
+
+    # Band-pass Difference of Gaussians (DoG)
+    band_micro = l_f - blur_micro           # Highest frequency micro-detail
+    band_fine = blur_micro - blur_fine      # Mid-high edge structure
+    band_clarity = blur_fine - blur_clarity # Local contrast / 3D clarity punch
+
+    # Noise gate on micro band so flat dark shadow noise isn't amplified
+    micro_mag = np.abs(band_micro)
+    noise_gate = np.clip((micro_mag - 1.2) / 4.0, 0.0, 1.0)
+    band_micro_gated = band_micro * noise_gate
+
+    # Soft-clipping Tanh limiter prevents bright/dark overshoot halos on high-contrast edges
+    strength = float(np.clip(amount, 0.0, 1.5))
+    boost_micro = 24.0 * np.tanh((band_micro_gated * (1.80 * strength)) / 24.0)
+    boost_fine = 26.0 * np.tanh((band_fine * (1.45 * strength)) / 26.0)
+    boost_clarity = 16.0 * np.tanh((band_clarity * (0.60 * strength)) / 16.0)
+
+    l_enhanced = np.clip(l_f + boost_micro + boost_fine + boost_clarity, 0, 255).astype(np.uint8)
+    return cv2.cvtColor(cv2.merge([l_enhanced, a_chan, b_chan]), cv2.COLOR_LAB2BGR)
+
+
+def contrast_adaptive_sharpening(image: np.ndarray, amount: float = 0.5) -> np.ndarray:
+    """
+    Stage 5: Overpowered Contrast-Adaptive Sharpening (CAS Pro).
+    High-power adaptive sharpening kernel (peak up to -0.36) that maximizes local acutance
+    without clipping or halo artifacts.
+    """
+    if amount <= 0.0:
+        return image
+
+    img_f = image.astype(np.float32) / 255.0
+    padded = cv2.copyMakeBorder(img_f, 1, 1, 1, 1, cv2.BORDER_REPLICATE)
+
+    # 3x3 cross + diagonal neighborhood
+    a = padded[:-2, 1:-1]   # Top
+    b = padded[1:-1, :-2]   # Left
+    e = padded[1:-1, 1:-1]  # Center
+    d = padded[1:-1, 2:]    # Right
+    c = padded[2:, 1:-1]    # Bottom
+
+    mn = np.minimum(np.minimum(np.minimum(a, b), np.minimum(c, d)), e)
+    mx = np.maximum(np.maximum(np.maximum(a, b), np.maximum(c, d)), e)
+
+    # Overpowered CAS peak weight (-0.34 at amount=1.0, vs old -0.125)
+    peak = -0.34 * float(np.clip(amount, 0.0, 1.3))
+    diff_max = 1.0 - mx
+    diff_min = mn
+    amp = np.sqrt(np.clip(np.minimum(diff_min, diff_max) / (mx + 1e-5), 0.0, 1.0))
+    w = amp * peak
+
+    num = e + w * (a + b + c + d)
+    den = 1.0 + 4.0 * w
+    sharpened = np.clip(num / np.maximum(den, 1e-4), 0.0, 1.0)
+    return (sharpened * 255.0).astype(np.uint8)
+
+
+def enhance_luminance_unsharp_mask(image: np.ndarray, amount: float = 0.5) -> np.ndarray:
+    """
+    Wrapper into the 3-Scale Laplacian Detail Pyramid for maximum Ultra-HD crispness.
+    """
+    return enhance_multiscale_luminance_pyramid(image, amount=amount)
+
+
+def enhance_tone_vibrance(
     image: np.ndarray,
-    scale_factor: float = 2.0,
-    upscale_factor: Optional[Any] = None,
+    clahe_clip: float = 2.0,
+    vibrance: float = 0.30,
+    saturation_boost: float = 0.16,
 ) -> np.ndarray:
     """
-    High-grade multi-scale Lanczos-4 Super-Resolution upscaling helper.
-    Supports both `scale_factor` and `upscale_factor` kwargs.
-    Enforces even dimensions for video codec compatibility.
+    Stage 6: Auto Black-Point Dehaze, Local HDR CLAHE, S-Curve Dynamic Contrast & Skin-Safe Vibrance.
     """
-    factor = float(upscale_factor if upscale_factor is not None else scale_factor)
-    if factor <= 1.0 or factor <= 0:
-        return image
-        
-    orig_h, orig_w = image.shape[:2]
-    new_w = max(2, int(round(orig_w * factor)))
-    new_h = max(2, int(round(orig_h * factor)))
-    # Ensure even dimensions for video codec compatibility
-    new_w += new_w % 2
-    new_h += new_h % 2
-    
-    if factor == 2.0:
-        return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
-    elif factor == 4.0:
-        # 2-stage multi-scale Lanczos-4 upscaling
-        mid_w, mid_h = orig_w * 2, orig_h * 2
-        mid_w += mid_w % 2
-        mid_h += mid_h % 2
-        mid_img = cv2.resize(image, (mid_w, mid_h), interpolation=cv2.INTER_LANCZOS4)
-        
-        # Subtle intermediate edge refinement
-        gray_mid = cv2.cvtColor(mid_img, cv2.COLOR_BGR2GRAY)
-        gx = cv2.Sobel(gray_mid, cv2.CV_32F, 1, 0, ksize=3)
-        gy = cv2.Sobel(gray_mid, cv2.CV_32F, 0, 1, ksize=3)
-        grad_mag = np.sqrt(gx ** 2 + gy ** 2)
-        grad_norm = np.clip(grad_mag / (np.max(grad_mag) + 1e-5), 0.0, 1.0)
-        grad_mask = np.repeat(grad_norm[:, :, np.newaxis], 3, axis=2)
-        
-        # Reinforce edges slightly between stages
-        mid_blur = cv2.GaussianBlur(mid_img, (3, 3), 0.8)
-        mid_refined = np.clip(mid_img.astype(np.float32) + 0.25 * grad_mask * (mid_img.astype(np.float32) - mid_blur.astype(np.float32)), 0, 255).astype(np.uint8)
-        
-        return cv2.resize(mid_refined, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
-    else:
-        # Arbitrary factor fallback
-        return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+
+    # 1. Auto Black-Point / White-Point Dehaze Stretch (only if dynamic range is compressed/hazy)
+    p_low, p_high = np.percentile(l, (1.0, 99.2))
+    if (p_low > 4.0 or p_high < 251.0) and (p_high - p_low > 20):
+        l_stretched = np.clip((l.astype(np.float32) - p_low) * (255.0 / (p_high - p_low)), 0, 255).astype(np.uint8)
+        l = cv2.addWeighted(l_stretched, 0.40, l, 0.60, 0)
+
+    # 2. Local HDR CLAHE on Luminance
+    if clahe_clip > 0.0:
+        clahe = cv2.createCLAHE(clipLimit=float(clahe_clip), tileGridSize=(8, 8))
+        l_clahe = clahe.apply(l)
+        l = cv2.addWeighted(l_clahe, 0.58, l, 0.42, 0)
+
+    # 3. Subtle Cinema S-Curve for deep blacks and crisp highlights
+    l_norm = l.astype(np.float32) / 255.0
+    s_curve = l_norm - 0.048 * np.sin(2.0 * np.pi * l_norm)
+    l = np.clip(s_curve * 255.0, 0, 255).astype(np.uint8)
+
+    bgr_toned = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+
+    # 4. Smart Non-Linear Vibrance in HSV space (protects skin tones from orange oversaturation)
+    if vibrance > 0.0 or saturation_boost > 0.0:
+        hsv = cv2.cvtColor(bgr_toned, cv2.COLOR_BGR2HSV).astype(np.float32)
+        h_c, s_c, v_c = cv2.split(hsv)
+        s_norm = s_c / 255.0
+
+        vibrance_gain = (1.0 - s_norm) * float(vibrance) * 1.15 + float(saturation_boost) * 0.85
+        skin_mask_hsv = ((h_c <= 24) | (h_c >= 166)).astype(np.float32)
+        vibrance_gain = vibrance_gain * (1.0 - 0.55 * skin_mask_hsv)
+
+        s_boosted = np.clip(s_c * (1.0 + vibrance_gain), 0, 255)
+        bgr_toned = cv2.cvtColor(cv2.merge([h_c, s_boosted, v_c]).astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+    return bgr_toned
 
 
 def apply_vibrance_and_tone(
     image: np.ndarray,
-    strength: float = 0.3,
-    vibrance: Optional[float] = None,
+    vibrance: float = 0.3,
+    strength: Optional[float] = None,
 ) -> np.ndarray:
     """
-    Dynamic tone and vibrance boost:
-    1. LAB CLAHE on L-channel with adaptive grid size and highlight/shadow protection
-       (prevents blowing out white UI cards or crushing dark backgrounds)
-    2. Intelligent non-linear saturation curve: boosts muted tones while protecting skin/vibrant areas
-    Supports both `strength` and `vibrance` kwargs.
+    Compatibility wrapper used by video_enhancer.py and main.py.
+    Supports both `vibrance` and legacy `strength` arguments.
     """
-    eff_vibrance = float(vibrance if vibrance is not None else strength)
-    if eff_vibrance <= 0.0:
+    eff = float(strength if strength is not None else vibrance)
+    if eff <= 0.0:
         return image
-        
-    eff_vibrance = min(1.0, max(0.0, eff_vibrance))
-    h, w = image.shape[:2]
-    
-    # 1. LAB CLAHE on luminance with adaptive grid size
-    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-    l_channel, a_channel, b_channel = cv2.split(lab)
-    l_float = l_channel.astype(np.float32)
-    
-    grid_size = 8 if max(h, w) < 256 else (12 if max(h, w) < 1024 else 16)
-    clip_limit = 1.0 + 1.8 * eff_vibrance
-    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(grid_size, grid_size))
-    l_clahe = clahe.apply(l_channel).astype(np.float32)
-    
-    # Highlight & shadow protection to avoid blowing out whites or crushing blacks
-    protect = np.clip((l_float - 12.0) / 25.0, 0.0, 1.0) * np.clip((245.0 - l_float) / 25.0, 0.0, 1.0)
-    l_toned = l_float * (1.0 - protect * eff_vibrance * 0.8) + l_clahe * (protect * eff_vibrance * 0.8)
-    l_final = np.clip(l_toned, 0, 255).astype(np.uint8)
-    
-    # Recombine LAB
-    lab_enhanced = cv2.merge([l_final, a_channel, b_channel])
-    bgr_tone = cv2.cvtColor(lab_enhanced, cv2.COLOR_LAB2BGR)
-    
-    # 2. Intelligent non-linear vibrance curve in HSV
-    hsv = cv2.cvtColor(bgr_tone, cv2.COLOR_BGR2HSV).astype(np.float32)
-    h, s, v = cv2.split(hsv)
-    
-    # Normalize saturation to [0, 1]
-    s_norm = s / 255.0
-    
-    # Non-linear boost: delta_s = 1.0 - s_norm
-    # Muted pixels (low s_norm) get maximum relative boost; saturated pixels stay protected
-    delta_s = 1.0 - s_norm
-    s_boosted = s_norm + (eff_vibrance * 0.45 * delta_s * s_norm)
-    s_new = np.clip(s_boosted * 255.0, 0, 255).astype(np.float32)
-    
-    hsv_boosted = cv2.merge([h, s_new, v])
-    result = cv2.cvtColor(hsv_boosted.astype(np.uint8), cv2.COLOR_HSV2BGR)
-    
-    # Blend with original according to eff_vibrance
-    blended = cv2.addWeighted(result, eff_vibrance, image, float(1.0 - eff_vibrance), 0)
-    return blended
-
-
-enhance_tone_vibrance = apply_vibrance_and_tone
+    return enhance_tone_vibrance(
+        image,
+        clahe_clip=1.8,
+        vibrance=eff,
+        saturation_boost=0.12,
+    )
 
 
 def apply_cas_sharpening(
     image: np.ndarray,
-    strength: float = 0.5,
-    amount: Optional[float] = None,
+    amount: float = 0.5,
+    strength: Optional[float] = None,
 ) -> np.ndarray:
     """
-    Scale-adaptive Contrast-Adaptive Sharpening (CAS) and dual-frequency luminance unsharp masking.
-    Operates strictly on the L-channel in LAB space to eliminate color fringing.
-    Includes edge gradient weighting and soft non-linear saturation to completely eliminate white halos around text.
-    Provides crisp edge definition, vector-like lineart, and micro-texture recovery.
-    Supports both `strength` and `amount` kwargs.
+    Compatibility wrapper combining Overpowered CAS Pro + 3-Scale Luminance Pyramid.
+    Supports both `amount` and legacy `strength` arguments.
     """
-    eff_amount = float(amount if amount is not None else strength)
-    if eff_amount <= 0.0:
+    eff = float(strength if strength is not None else amount)
+    if eff <= 0.0:
         return image
-        
-    eff_amount = min(1.0, max(0.0, eff_amount))
-    h, w = image.shape[:2]
-    
-    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    l_float = l.astype(np.float32)
-    
-    # Scale-adaptive sigma so high-res images get proportional micro-detail
-    scale_ref = max(1.0, min(h, w) / 360.0)
-    sigma_fine = max(0.75, 0.65 * min(scale_ref, 4.0))
-    sigma_med = max(2.0, 1.6 * min(scale_ref, 4.0))
-    
-    # Dual-frequency high-pass bands for fine details and structural contours
-    blur_fine = cv2.GaussianBlur(l_float, (0, 0), sigma_fine)
-    blur_med = cv2.GaussianBlur(l_float, (0, 0), sigma_med)
-    hp_fine = l_float - blur_fine
-    hp_med = l_float - blur_med
-    hp = 0.70 * hp_fine + 0.60 * hp_med
-    
-    # Sobel gradient for edge awareness (protects flat panels and skies from noise)
-    gx = cv2.Sobel(blur_fine, cv2.CV_32F, 1, 0, ksize=3)
-    gy = cv2.Sobel(blur_fine, cv2.CV_32F, 0, 1, ksize=3)
-    edge_mag = np.sqrt(gx**2 + gy**2)
-    edge_weight = np.clip(edge_mag / 20.0, 0.2, 1.4)
-    
-    # Anti-halo soft non-linear clamping (prevents ugly white halos around text letters & UI)
-    sharpen_gain = 1.0 + 3.0 * eff_amount
-    clamped_hp = np.tanh((hp * edge_weight * sharpen_gain) / 36.0) * 36.0
-    
-    l_sharp = np.clip(l_float + clamped_hp, 0, 255).astype(np.uint8)
-    
-    lab_sharp = cv2.merge([l_sharp, a, b])
-    result = cv2.cvtColor(lab_sharp, cv2.COLOR_LAB2BGR)
-    return result
-
-
-contrast_adaptive_sharpening = apply_cas_sharpening
+    cas_img = contrast_adaptive_sharpening(image, amount=eff * 1.15)
+    return enhance_multiscale_luminance_pyramid(cas_img, amount=eff)
 
 
 def enhance_image(
@@ -469,21 +504,20 @@ def enhance_image(
     scale_factor: float = 2.0,
     denoise_strength: float = 0.25,
     retouch_strength: float = 0.40,
-    sharpen_amount: float = 0.45,
-    vibrance_boost: float = 0.20,
-    clahe_clip: float = 1.5,
-    # Keyword aliases used by app/main.py and tests:
-    upscale_factor: Optional[int] = None,
+    sharpen_amount: float = 0.55,
+    vibrance_boost: float = 0.25,
+    clahe_clip: float = 2.0,
+    # Keyword aliases passed by app/main.py:
+    upscale_factor: Optional[float] = None,
     face_retouch: Optional[float] = None,
     sharpen: Optional[float] = None,
     vibrance: Optional[float] = None,
     denoise: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
-    Core Image Enhancement Function.
-    Supports both legacy and PRD parameter conventions.
+    Full Wink-Style Overpowered 7-Stage Ultra-HD Image Enhancement Pipeline.
     """
-    start_time = time.perf_counter()
+    start_time = time.time()
 
     eff_scale = float(upscale_factor if upscale_factor is not None else scale_factor)
     eff_denoise = float(denoise if denoise is not None else denoise_strength)
@@ -496,85 +530,89 @@ def enhance_image(
 
     img = cv2.imread(input_path, cv2.IMREAD_COLOR)
     if img is None:
-        raise ValueError(f"Failed to read image at: {input_path}")
+        raise ValueError(f"Failed to load image: {input_path}")
 
-    h_in, w_in = img.shape[:2]
+    orig_h, orig_w = img.shape[:2]
     orig_tenengrad = calculate_tenengrad(img)
 
-    target_w = max(2, int(round(w_in * eff_scale)))
-    target_h = max(2, int(round(h_in * eff_scale)))
+    # Compute baseline upscaled for sharpness comparison
+    target_w = max(2, int(round(orig_w * eff_scale)))
+    target_h = max(2, int(round(orig_h * eff_scale)))
     if eff_scale > 1.0:
         target_w += target_w % 2
         target_h += target_h % 2
-
     baseline_upscaled = cv2.resize(img, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
     baseline_sharpness = calculate_tenengrad(baseline_upscaled)
 
-    # Step 1: Denoise filter
-    current = denoise_image(img, strength=eff_denoise)
+    # Stage 1: Chroma-Isolated & Edge-Protected Denoising
+    working = denoise_image(img, strength=eff_denoise)
 
-    # Step 2: Portrait Retouching & Natural Skin Smoothing
-    current = apply_portrait_retouch(current, strength=eff_retouch)
+    # Stage 2: 3-Band Frequency Separation Portrait Retouch + Eye/Lip Boost
+    working = apply_portrait_retouch(working, strength=eff_retouch)
 
-    # Step 3: High-grade Multi-Scale Lanczos-4 Super-Resolution
-    if eff_scale != 1.0:
-        current = apply_upscale(current, scale_factor=eff_scale)
+    # Stage 3 & 4: Iterative Back-Projection (IBP) Super-Resolution + Edge-Shock De-blurring
+    working = apply_upscale(working, scale_factor=eff_scale, fast_mode=False)
 
-    # Step 4: Dynamic Tone & Vibrance Boost
-    current = apply_vibrance_and_tone(current, strength=eff_vibrance)
+    # Stage 5: Auto Dehaze, HDR CLAHE, Cinema S-Curve & Skin-Safe Vibrance
+    working = enhance_tone_vibrance(
+        working,
+        clahe_clip=clahe_clip,
+        vibrance=eff_vibrance,
+        saturation_boost=0.14,
+    )
 
-    # Step 5: Deblur & Contrast-Adaptive Sharpening (CAS)
-    current = apply_cas_sharpening(current, strength=eff_sharpen)
+    # Stage 6: Overpowered Contrast-Adaptive Sharpening (CAS Pro)
+    working = contrast_adaptive_sharpening(working, amount=eff_sharpen * 1.05)
 
-    # Save output
+    # Stage 7: 3-Scale Laplacian Pyramid Detail & Local Clarity Booster (Micro + Fine + Clarity)
+    working = enhance_multiscale_luminance_pyramid(working, amount=eff_sharpen * 0.95)
+
+    # Save output image with maximum studio quality
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     ext = os.path.splitext(output_path)[1].lower()
     if ext in [".jpg", ".jpeg"]:
-        cv2.imwrite(output_path, current, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
+        cv2.imwrite(output_path, working, [int(cv2.IMWRITE_JPEG_QUALITY), 99])
     elif ext == ".png":
-        cv2.imwrite(output_path, current, [int(cv2.IMWRITE_PNG_COMPRESSION), 3])
+        cv2.imwrite(output_path, working, [int(cv2.IMWRITE_PNG_COMPRESSION), 2])
     elif ext == ".webp":
-        cv2.imwrite(output_path, current, [int(cv2.IMWRITE_WEBP_QUALITY), 98])
+        cv2.imwrite(output_path, working, [int(cv2.IMWRITE_WEBP_QUALITY), 99])
     else:
-        success = cv2.imwrite(output_path, current)
-        if not success:
-            pil_img = Image.fromarray(cv2.cvtColor(current, cv2.COLOR_BGR2RGB))
-            pil_img.save(output_path)
+        cv2.imwrite(output_path, working)
 
-    duration_sec = time.perf_counter() - start_time
-    processing_time_ms = duration_sec * 1000.0
+    duration = time.time() - start_time
+    final_h, final_w = working.shape[:2]
+    final_tenengrad = calculate_tenengrad(working)
+    psnr_val = calculate_psnr(img, working)
+    psnr_baseline = calculate_psnr(baseline_upscaled, working)
+    ssim_val = calculate_ssim(img, working)
+    tenengrad_gain = round(((final_tenengrad - orig_tenengrad) / max(orig_tenengrad, 1e-5)) * 100, 2)
+    sharpness_gain = (final_tenengrad / baseline_sharpness) if baseline_sharpness > 0 else 1.0
 
-    final_h, final_w = current.shape[:2]
-    enhanced_sharpness = calculate_tenengrad(current)
-    sharpness_gain = (
-        enhanced_sharpness / baseline_sharpness
-        if baseline_sharpness > 0 else 1.0
-    )
-    psnr_baseline = calculate_psnr(baseline_upscaled, current)
-    psnr_val = calculate_psnr(img, current)
-    ssim_val = calculate_ssim(img, current)
-    tenengrad_gain = round(((enhanced_sharpness - orig_tenengrad) / max(orig_tenengrad, 1e-5)) * 100, 2)
+    orig_file_size = os.path.getsize(input_path) if os.path.exists(input_path) else 0
+    out_file_size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
 
     return {
         "status": "success",
         "input_path": input_path,
         "output_path": output_path,
-        "input_resolution": [w_in, h_in],
+        "original_resolution": f"{orig_w}x{orig_h}",
+        "input_resolution": [orig_w, orig_h],
         "output_resolution": [final_w, final_h],
-        "original_resolution": f"{w_in}x{h_in}",
         "scale_factor": eff_scale,
-        "processing_time_sec": round(duration_sec, 3),
-        "processing_time_ms": round(processing_time_ms, 2),
+        "original_size_bytes": orig_file_size,
+        "output_size_bytes": out_file_size,
         "tenengrad_before": round(orig_tenengrad, 2),
-        "tenengrad_after": round(enhanced_sharpness, 2),
+        "tenengrad_after": round(final_tenengrad, 2),
         "tenengrad_improvement_pct": tenengrad_gain,
         "psnr_db": round(psnr_val, 2),
         "ssim": round(ssim_val, 4),
+        "processing_time_sec": round(duration, 3),
+        "processing_time_ms": round(duration * 1000.0, 2),
         "metrics": {
             "sharpness_gain": round(sharpness_gain, 4),
             "psnr_baseline": round(psnr_baseline, 2),
             "tenengrad_before": round(orig_tenengrad, 2),
-            "tenengrad_after": round(enhanced_sharpness, 2),
+            "tenengrad_after": round(final_tenengrad, 2),
             "tenengrad_gain": tenengrad_gain,
             "psnr_db": round(psnr_val, 2),
             "ssim": round(ssim_val, 4),

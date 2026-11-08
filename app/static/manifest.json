@@ -1,6 +1,6 @@
 {
-  "name": "Lumina HD Studio",
-  "short_name": "Lumina HD",
+  "name": "Wink HD Enhancer",
+  "short_name": "Wink HD",
   "description": "AI Image & Video Super-Resolution Studio",
   "start_url": "/",
   "display": "standalone",
