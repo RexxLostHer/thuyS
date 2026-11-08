@@ -419,6 +419,7 @@ document.addEventListener('DOMContentLoaded', () => {
     progressHud.style.display = 'flex';
     exportPanel.style.display = 'none';
     updateProgressUI('Initializing', 5, 0, 'Preparing media pipeline...');
+    if (window.setLogoProcessing) window.setLogoProcessing(true);
 
     const formData = new FormData();
     formData.append('file', currentFile);
@@ -498,6 +499,7 @@ document.addEventListener('DOMContentLoaded', () => {
     enhanceSpinner.style.display = 'none';
     if (btnEnhanceIcon) btnEnhanceIcon.style.display = 'block';
     btnEnhanceText.textContent = 'Enhance to HD';
+    if (window.setLogoProcessing) window.setLogoProcessing(false);
   }
 
   function showExportMetrics({ resolution, time, gain }) {
@@ -547,4 +549,159 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     finishProcessing();
   }
+
+  // Mobile Connect Modal & Tunnel Bridge
+  const btnMobileConnect = document.getElementById('btnMobileConnect');
+  const modalMobileConnect = document.getElementById('modalMobileConnect');
+  const btnCloseMobileModal = document.getElementById('btnCloseMobileModal');
+  const qrCodeImg = document.getElementById('qrCodeImg');
+  const qrLoadingSpinner = document.getElementById('qrLoadingSpinner');
+  const qrSpinnerText = document.getElementById('qrSpinnerText');
+  const tabTunnelPublic = document.getElementById('tabTunnelPublic');
+  const tabTunnelLocal = document.getElementById('tabTunnelLocal');
+  const groupPublicLink = document.getElementById('groupPublicLink');
+  const groupLocalLink = document.getElementById('groupLocalLink');
+  const inputTunnelUrl = document.getElementById('inputTunnelUrl');
+  const inputLocalUrl = document.getElementById('inputLocalUrl');
+  const btnCopyTunnelUrl = document.getElementById('btnCopyTunnelUrl');
+  const btnCopyLocalUrl = document.getElementById('btnCopyLocalUrl');
+
+  let activeTunnelData = null;
+  let tunnelPollInterval = null;
+  let activeQrMode = 'public'; // 'public' or 'local'
+
+  if (btnMobileConnect && modalMobileConnect) {
+    btnMobileConnect.addEventListener('click', () => {
+      modalMobileConnect.style.display = 'flex';
+      fetchTunnelStatus(true);
+    });
+
+    btnCloseMobileModal.addEventListener('click', closeMobileModal);
+    modalMobileConnect.addEventListener('click', (e) => {
+      if (e.target === modalMobileConnect) closeMobileModal();
+    });
+
+    function closeMobileModal() {
+      modalMobileConnect.style.display = 'none';
+      if (tunnelPollInterval) {
+        clearInterval(tunnelPollInterval);
+        tunnelPollInterval = null;
+      }
+    }
+
+    // Switch between Public HTTPS and Local Wi-Fi tabs
+    if (tabTunnelPublic && tabTunnelLocal) {
+      tabTunnelPublic.addEventListener('click', () => {
+        activeQrMode = 'public';
+        tabTunnelPublic.classList.add('active');
+        tabTunnelLocal.classList.remove('active');
+        if (groupPublicLink) groupPublicLink.style.display = 'flex';
+        if (groupLocalLink) groupLocalLink.style.display = 'none';
+        updateQrDisplay();
+      });
+
+      tabTunnelLocal.addEventListener('click', () => {
+        activeQrMode = 'local';
+        tabTunnelLocal.classList.add('active');
+        tabTunnelPublic.classList.remove('active');
+        if (groupPublicLink) groupPublicLink.style.display = 'none';
+        if (groupLocalLink) groupLocalLink.style.display = 'flex';
+        updateQrDisplay();
+      });
+    }
+
+    function updateQrDisplay() {
+      if (!activeTunnelData) return;
+      if (activeQrMode === 'public') {
+        if (activeTunnelData.qr_tunnel_b64) {
+          qrCodeImg.src = activeTunnelData.qr_tunnel_b64;
+          qrCodeImg.style.display = 'block';
+          qrLoadingSpinner.style.display = 'none';
+        } else {
+          qrCodeImg.style.display = 'none';
+          qrLoadingSpinner.style.display = 'flex';
+        }
+      } else {
+        if (activeTunnelData.qr_local_b64) {
+          qrCodeImg.src = activeTunnelData.qr_local_b64;
+          qrCodeImg.style.display = 'block';
+          qrLoadingSpinner.style.display = 'none';
+        }
+      }
+    }
+
+    async function fetchTunnelStatus(autoStart = false) {
+      try {
+        let res = await fetch('/api/tunnel/status');
+        let data = await res.json();
+        activeTunnelData = data;
+
+        if (inputLocalUrl) inputLocalUrl.value = data.local_url || 'http://127.0.0.1:8484';
+
+        if (data.status === 'running' && data.tunnel_url) {
+          if (inputTunnelUrl) inputTunnelUrl.value = data.tunnel_url;
+          updateQrDisplay();
+          if (tunnelPollInterval) {
+            clearInterval(tunnelPollInterval);
+            tunnelPollInterval = null;
+          }
+        } else if (autoStart && data.status === 'idle') {
+          // Trigger start of Cloudflare Tunnel
+          if (qrSpinnerText) qrSpinnerText.textContent = 'Menghubungkan ke Cloudflare Quick Tunnel...';
+          await fetch('/api/tunnel/start', { method: 'POST' });
+          pollTunnelProgress();
+        } else if (data.status === 'starting') {
+          pollTunnelProgress();
+        } else if (data.status === 'error') {
+          if (inputTunnelUrl) inputTunnelUrl.value = 'Gunakan Link Wi-Fi Lokal';
+          if (qrSpinnerText) qrSpinnerText.textContent = `Gagal tunnel: ${data.error_message || 'Timeout'}. Silakan gunakan tab Wi-Fi Lokal.`;
+          // Fallback to local
+          if (tabTunnelLocal) tabTunnelLocal.click();
+        }
+      } catch (err) {
+        console.warn('Could not fetch tunnel status:', err);
+      }
+    }
+
+    function pollTunnelProgress() {
+      if (tunnelPollInterval) return;
+      tunnelPollInterval = setInterval(async () => {
+        try {
+          const res = await fetch('/api/tunnel/status');
+          const data = await res.json();
+          activeTunnelData = data;
+          if (data.status === 'running' && data.tunnel_url) {
+            if (inputTunnelUrl) inputTunnelUrl.value = data.tunnel_url;
+            updateQrDisplay();
+            clearInterval(tunnelPollInterval);
+            tunnelPollInterval = null;
+          } else if (data.status === 'error') {
+            clearInterval(tunnelPollInterval);
+            tunnelPollInterval = null;
+            if (tabTunnelLocal) tabTunnelLocal.click();
+          }
+        } catch (e) {}
+      }, 1500);
+    }
+
+    // Copy to clipboard helpers
+    if (btnCopyTunnelUrl) {
+      btnCopyTunnelUrl.addEventListener('click', () => {
+        if (!inputTunnelUrl.value) return;
+        navigator.clipboard.writeText(inputTunnelUrl.value);
+        btnCopyTunnelUrl.textContent = 'Tersalin!';
+        setTimeout(() => { btnCopyTunnelUrl.textContent = 'Salin'; }, 2000);
+      });
+    }
+
+    if (btnCopyLocalUrl) {
+      btnCopyLocalUrl.addEventListener('click', () => {
+        if (!inputLocalUrl.value) return;
+        navigator.clipboard.writeText(inputLocalUrl.value);
+        btnCopyLocalUrl.textContent = 'Tersalin!';
+        setTimeout(() => { btnCopyLocalUrl.textContent = 'Salin'; }, 2000);
+      });
+    }
+  }
+
 });

@@ -43,14 +43,21 @@ SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
 
 SERVER_START_TIME = time.time()
 
+# Import tunnel service
+try:
+    from scripts.tunnel_launcher import get_tunnel_status, start_tunnel_background
+except ImportError:
+    get_tunnel_status = lambda port=8484: {"status": "error", "error_message": "tunnel_launcher missing"}
+    start_tunnel_background = lambda port=8484: {"status": "error", "error_message": "tunnel_launcher missing"}
+
 # In-memory storage for active tasks
 # task_id -> {status, stage, percent, fps, message, input_url, output_url, result, error, queue}
 TASKS: Dict[str, Dict[str, Any]] = {}
 
 app = FastAPI(
-    title="Wink HD Enhancer API",
-    description="Local AI Super-Resolution and Portrait Retouching Engine inspired by Wink",
-    version="1.0.0",
+    title="Lumina HD Studio API",
+    description="Local AI Super-Resolution and Video/Photo Enhancement Engine",
+    version="2.0.0",
 )
 
 # CORS middleware for local frontend communication
@@ -123,7 +130,20 @@ async def health_check():
         },
         "version": "1.0.0",
         "app": "Wink HD Enhancer",
+        "brand": "Lumina HD Studio",
     }
+
+
+@app.get("/api/tunnel/status")
+async def get_mobile_tunnel_status():
+    """Retrieve Cloudflare Tunnel and local Wi-Fi URLs with base64 QR codes."""
+    return get_tunnel_status(8484)
+
+
+@app.post("/api/tunnel/start")
+async def start_mobile_tunnel():
+    """Trigger background startup of Cloudflare Public Tunnel."""
+    return start_tunnel_background(8484)
 
 
 @app.get("/api/samples")

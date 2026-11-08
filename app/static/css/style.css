@@ -814,3 +814,406 @@ body {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+
+/* Animated Brand Icon (Lumina HD Canvas Engine) */
+.brand-icon-animated {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  background: #101014;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  position: relative;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.8);
+  cursor: pointer;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.2s ease;
+}
+
+.brand-icon-animated:hover {
+  border-color: rgba(255, 255, 255, 0.4);
+  box-shadow: 0 0 14px rgba(255, 255, 255, 0.2);
+  transform: scale(1.05);
+}
+
+.header-logo-canvas {
+  width: 28px;
+  height: 28px;
+  display: block;
+  image-rendering: -webkit-optimize-contrast;
+  transition: transform 0.3s ease;
+}
+
+.header-logo-canvas.logo-processing {
+  animation: logoGlowPulse 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes logoGlowPulse {
+  0% {
+    filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.4));
+  }
+  100% {
+    filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.95)) drop-shadow(0 0 14px rgba(139, 92, 246, 0.6));
+  }
+}
+
+/* Header Actions & Mobile Connect Button */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.btn-mobile-connect {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 6px 12px;
+  background: #111116;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--text-primary);
+  border-radius: var(--radius-full);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-mobile-connect:hover {
+  background: #1b1b22;
+  border-color: rgba(255, 255, 255, 0.45);
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.12);
+}
+
+.btn-mobile-connect svg {
+  color: #FFFFFF;
+}
+
+/* Modal Backdrop & Dialog */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  animation: modalFadeIn 0.2s ease-out;
+}
+
+@keyframes modalFadeIn {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.modal-dialog {
+  width: 100%;
+  max-width: 480px;
+  background: #09090D;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.9);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.modal-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.modal-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #FFFFFF;
+}
+
+.btn-modal-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.4rem;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 4px;
+  transition: color 0.15s;
+}
+
+.btn-modal-close:hover {
+  color: #FFFFFF;
+}
+
+.modal-desc {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  margin-bottom: 1.25rem;
+}
+
+.tunnel-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  align-items: center;
+}
+
+.qr-container {
+  width: 180px;
+  height: 180px;
+  background: #FFFFFF;
+  border-radius: var(--radius-md);
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  position: relative;
+  overflow: hidden;
+}
+
+.qr-code-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.qr-spinner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  font-size: 0.75rem;
+  color: #111115;
+  text-align: center;
+  padding: 10px;
+}
+
+.tunnel-tabs {
+  display: flex;
+  gap: 6px;
+  background: #111116;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 3px;
+  border-radius: var(--radius-full);
+  width: 100%;
+}
+
+.tunnel-tab-btn {
+  flex: 1;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.tunnel-tab-btn.active {
+  background: #FFFFFF;
+  color: #000000;
+  font-weight: 600;
+}
+
+.tunnel-links {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.link-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 100%;
+}
+
+.link-label {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.link-input-group {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+
+.link-input {
+  flex: 1;
+  background: #141418;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #FFFFFF;
+  padding: 7px 10px;
+  font-size: 0.78rem;
+  border-radius: var(--radius-sm);
+  outline: none;
+  font-family: monospace;
+}
+
+.btn-copy {
+  padding: 0 14px;
+  background: #222228;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #FFFFFF;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-copy:hover {
+  background: #2e2e36;
+}
+
+/* ==========================================================================
+   Mobile Responsive Styles (Smartphone & Small Tablet Adaptation)
+   ========================================================================== */
+@media (max-width: 768px) {
+  .app-header {
+    height: auto;
+    padding: 0.75rem 1rem;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .brand-title {
+    font-size: 1rem;
+  }
+
+  .mode-switcher {
+    order: 3;
+    width: 100%;
+    justify-content: center;
+  }
+
+  .mode-tab {
+    flex: 1;
+    justify-content: center;
+    padding: 7px 12px;
+  }
+
+  .header-actions {
+    gap: 0.5rem;
+  }
+
+  .system-status {
+    padding: 4px 8px;
+    font-size: 0.7rem;
+  }
+
+  .btn-mobile-connect {
+    padding: 5px 9px;
+    font-size: 0.72rem;
+  }
+
+  .app-main {
+    padding: 0.75rem;
+    gap: 1rem;
+    grid-template-columns: 1fr;
+  }
+
+  .viewport-container {
+    min-height: 320px;
+    height: 48vh;
+  }
+
+  .comparison-container {
+    min-height: 320px;
+  }
+
+  .dropzone {
+    padding: 1.5rem 1rem;
+  }
+
+  .dropzone-title {
+    font-size: 1.05rem;
+  }
+
+  .dropzone-subtitle {
+    font-size: 0.75rem;
+  }
+
+  /* Make slider handle easier to touch on small screens */
+  .slider-divider {
+    width: 4px;
+  }
+
+  .slider-handle {
+    width: 44px;
+    height: 44px;
+    touch-action: none;
+  }
+
+  /* Bottom Controls on Mobile */
+  .controls-sidebar {
+    width: 100%;
+  }
+
+  .control-panel {
+    padding: 1rem;
+  }
+
+  .upscale-btn-group {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .btn-upscale-pill {
+    padding: 8px 4px;
+  }
+
+  .btn-upscale-pill .pill-val {
+    font-size: 0.95rem;
+  }
+
+  .btn-primary-enhance {
+    padding: 12px;
+    font-size: 0.95rem;
+  }
+
+  .video-controls-bar {
+    padding: 6px 8px;
+    gap: 0.5rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .viewport-container {
+    min-height: 280px;
+    height: 42vh;
+  }
+
+  .comparison-container {
+    min-height: 280px;
+  }
+
+  .modal-dialog {
+    padding: 1.25rem 1rem;
+  }
+
+  .qr-container {
+    width: 160px;
+    height: 160px;
+  }
+}

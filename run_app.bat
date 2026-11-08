@@ -1,8 +1,8 @@
 @echo off
-title Wink HD Enhancer
+title Lumina HD Studio
 
 :: ============================================================================
-::                       WINK HD ENHANCER LAUNCHER
+::                       LUMINA HD STUDIO LAUNCHER
 ::                 AI Image & Video Super-Resolution Studio
 :: ============================================================================
 
@@ -44,13 +44,13 @@ if not exist ".venv\Scripts\python.exe" (
 :: 4. Check if server is already running on port 8484
 netstat -ano | findstr /R /C:":8484 .*LISTENING" >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
-    echo [*] Wink HD Enhancer server is already active on port 8484.
+    echo [*] Lumina HD Studio server is already active on port 8484.
     goto launch_ui
 )
 
 :: 5. Launch Uvicorn server in background
-echo [*] Starting Wink HD Enhancer backend on http://127.0.0.1:8484 ...
-start "" /B ".venv\Scripts\python.exe" -m uvicorn app.main:app --host 127.0.0.1 --port 8484
+echo [*] Starting Lumina HD Studio backend on http://127.0.0.1:8484 ...
+start "" /B ".venv\Scripts\python.exe" -m uvicorn app.main:app --host 0.0.0.0 --port 8484
 
 :: 6. Wait 2 seconds for server initialization
 timeout /t 2 /nobreak >nul 2>&1 || powershell -nop -c "Start-Sleep -Seconds 2"

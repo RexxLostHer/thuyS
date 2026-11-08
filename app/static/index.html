@@ -2,22 +2,24 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Wink HD Enhancer — Pure Black Minimalist</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=3.2.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Lumina HD Studio — AI Super-Resolution Studio</title>
+  <link rel="stylesheet" href="/static/css/style.css?v=4.0.0">
+  <link rel="icon" type="image/png" href="/static/assets/favicon.png">
+  <link rel="apple-touch-icon" href="/static/assets/favicon.png">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23FFFFFF' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='3'/><path d='M12 2v3m0 14v3M2 12h3m14 0h3'/></svg>">
 </head>
 <body>
   <!-- Header / Navigation Bar -->
   <header class="app-header">
     <div class="brand">
-      <div class="brand-icon">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="3"></circle>
-          <path d="M12 2v3m0 14v3M2 12h3m14 0h3"></path>
-        </svg>
+      <div class="brand-icon-animated" id="brandContainer">
+        <canvas id="headerLogoCanvas" width="72" height="72" class="header-logo-canvas"></canvas>
       </div>
-      <div class="brand-title">WINK HD</div>
+      <div class="brand-title">LUMINA HD</div>
       <span class="brand-badge">STUDIO</span>
     </div>
 
@@ -40,10 +42,20 @@
       </button>
     </div>
 
-    <!-- System Status Indicator -->
-    <div class="system-status">
-      <span class="status-dot"></span>
-      <span id="statusLabel">Engine Ready</span>
+    <!-- Header Actions: Mobile Connect & System Status -->
+    <div class="header-actions">
+      <button id="btnMobileConnect" class="btn-mobile-connect" type="button" title="Buka di HP / Scan QR Code">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
+          <line x1="12" y1="18" x2="12.01" y2="18"></line>
+        </svg>
+        <span>Buka di HP</span>
+      </button>
+
+      <div class="system-status">
+        <span class="status-dot"></span>
+        <span id="statusLabel">Engine Ready</span>
+      </div>
     </div>
   </header>
 
@@ -292,10 +304,65 @@
     </aside>
   </main>
 
+  
+  <!-- Modal Connect to Mobile (Cloudflare Tunnel + LAN QR Code) -->
+  <div id="modalMobileConnect" class="modal-backdrop" style="display: none;">
+    <div class="modal-dialog glass-panel">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
+            <line x1="12" y1="18" x2="12.01" y2="18"></line>
+          </svg>
+          <span class="modal-title">Akses Lumina HD di HP</span>
+        </div>
+        <button id="btnCloseMobileModal" class="btn-modal-close" type="button">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <p class="modal-desc">Scan QR Code dengan kamera HP Anda untuk membuka studio langsung di browser smartphone (tanpa install aplikasi):</p>
+
+        <div class="tunnel-card">
+          <div class="qr-container">
+            <img id="qrCodeImg" class="qr-code-img" src="" alt="QR Code" style="display: none;">
+            <div id="qrLoadingSpinner" class="qr-spinner" style="display: flex;">
+              <div class="spinner"></div>
+              <span id="qrSpinnerText">Menyiapkan Cloudflare Tunnel HTTPS...</span>
+            </div>
+          </div>
+
+          <div class="tunnel-tabs">
+            <button id="tabTunnelPublic" class="tunnel-tab-btn active" type="button">Cloudflare HTTPS</button>
+            <button id="tabTunnelLocal" class="tunnel-tab-btn" type="button">Wi-Fi Lokal</button>
+          </div>
+
+          <div class="tunnel-links">
+            <div class="link-group" id="groupPublicLink">
+              <span class="link-label">Link Publik HTTPS (Bisa via Paket Data / Wi-Fi Mana Saja):</span>
+              <div class="link-input-group">
+                <input id="inputTunnelUrl" class="link-input" type="text" readonly value="Menghubungkan...">
+                <button id="btnCopyTunnelUrl" class="btn-copy" type="button">Salin</button>
+              </div>
+            </div>
+
+            <div class="link-group" id="groupLocalLink" style="display: none;">
+              <span class="link-label">Link Wi-Fi Lokal (Harus 1 Jaringan Wi-Fi):</span>
+              <div class="link-input-group">
+                <input id="inputLocalUrl" class="link-input" type="text" readonly value="http://...">
+                <button id="btnCopyLocalUrl" class="btn-copy" type="button">Salin</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Hidden DOM mount for video stream decoding in Chromium -->
   <div id="videoMediaMount" style="position: absolute; width: 4px; height: 4px; opacity: 0.01; z-index: -999; overflow: hidden; pointer-events: none;"></div>
 
-  <script src="/static/js/slider.js?v=3.2.0"></script>
-  <script src="/static/js/app.js?v=3.2.0"></script>
+  <script src="/static/js/logo-anim.js?v=4.0.0"></script>
+  <script src="/static/js/slider.js?v=4.0.0"></script>
+  <script src="/static/js/app.js?v=4.0.0"></script>
 </body>
 </html>

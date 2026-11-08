@@ -49,6 +49,9 @@ class ComparisonSlider {
 
     const onMove = (e) => {
       if (!this.isDragging) return;
+      if (e.cancelable && e.touches) {
+        e.preventDefault();
+      }
       this.handleDrag(e);
     };
 
@@ -64,8 +67,9 @@ class ComparisonSlider {
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onEnd);
 
-    // Touch events
+    // Touch events for mobile phones (preventing scroll thrashing during comparison)
     this.container.addEventListener('touchstart', onStart, { passive: false });
+    this.container.addEventListener('touchmove', onMove, { passive: false });
     window.addEventListener('touchmove', onMove, { passive: false });
     window.addEventListener('touchend', onEnd);
   }
