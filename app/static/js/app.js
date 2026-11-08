@@ -35,7 +35,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const sliderDenoise = document.getElementById('sliderDenoise');
   const valDenoise = document.getElementById('valDenoise');
 
+  const btnPresetUltraHD = document.getElementById('btnPresetUltraHD');
   const btnPresetPortrait = document.getElementById('btnPresetPortrait');
+  const btnPresetText = document.getElementById('btnPresetText');
   const btnPresetLandscape = document.getElementById('btnPresetLandscape');
   const btnPresetCinematic = document.getElementById('btnPresetCinematic');
 
@@ -171,16 +173,44 @@ document.addEventListener('DOMContentLoaded', () => {
   bindSlider(sliderVibrance, valVibrance);
   bindSlider(sliderDenoise, valDenoise);
 
-  // Preset Configurations
-  btnPresetPortrait.addEventListener('click', () => {
-    setSliderValues(75, 45, 35, 40);
-  });
-  btnPresetLandscape.addEventListener('click', () => {
-    setSliderValues(0, 80, 65, 20);
-  });
-  btnPresetCinematic.addEventListener('click', () => {
-    setSliderValues(30, 60, 40, 50);
-  });
+  // Preset Configurations with Multi-Mode Acutance & Clarity Tuning
+  const allPresetButtons = [btnPresetUltraHD, btnPresetPortrait, btnPresetText, btnPresetLandscape, btnPresetCinematic].filter(Boolean);
+
+  function setActivePreset(activeBtn) {
+    allPresetButtons.forEach((b) => b.classList.remove('active'));
+    if (activeBtn) activeBtn.classList.add('active');
+  }
+
+  if (btnPresetUltraHD) {
+    btnPresetUltraHD.addEventListener('click', () => {
+      setActivePreset(btnPresetUltraHD);
+      setSliderValues(30, 65, 35, 15);
+    });
+  }
+  if (btnPresetPortrait) {
+    btnPresetPortrait.addEventListener('click', () => {
+      setActivePreset(btnPresetPortrait);
+      setSliderValues(75, 50, 25, 20);
+    });
+  }
+  if (btnPresetText) {
+    btnPresetText.addEventListener('click', () => {
+      setActivePreset(btnPresetText);
+      setSliderValues(0, 85, 15, 10);
+    });
+  }
+  if (btnPresetLandscape) {
+    btnPresetLandscape.addEventListener('click', () => {
+      setActivePreset(btnPresetLandscape);
+      setSliderValues(0, 80, 60, 15);
+    });
+  }
+  if (btnPresetCinematic) {
+    btnPresetCinematic.addEventListener('click', () => {
+      setActivePreset(btnPresetCinematic);
+      setSliderValues(30, 60, 40, 30);
+    });
+  }
 
   function setSliderValues(face, sharp, vib, den) {
     sliderFaceRetouch.value = face;
@@ -192,6 +222,13 @@ document.addEventListener('DOMContentLoaded', () => {
     sliderDenoise.value = den;
     valDenoise.textContent = `${den}%`;
   }
+
+  // Clear active preset highlight when sliders are manually tweaked
+  [sliderFaceRetouch, sliderSharpen, sliderVibrance, sliderDenoise].forEach((sliderEl) => {
+    sliderEl.addEventListener('input', () => {
+      allPresetButtons.forEach((b) => b.classList.remove('active'));
+    });
+  });
 
   // Dropzone Events
   dropzone.addEventListener('click', () => fileInput.click());

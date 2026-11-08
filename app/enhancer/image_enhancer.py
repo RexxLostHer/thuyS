@@ -113,22 +113,40 @@ def denoise_image(
     denoise_strength: Optional[float] = None,
 ) -> np.ndarray:
     """
-    Apply edge-preserving dual-domain bilateral denoising.
+    Edge-preserving dual-domain chrominance and flat-area luminance denoising.
+    Cleans up compression artifacts and sensor blotches without softening high-frequency edges or text.
     Supports both `strength` and `denoise_strength` keyword arguments.
     """
     eff_strength = float(denoise_strength if denoise_strength is not None else strength)
     if eff_strength <= 0.0:
         return image
     
-    # Scale parameters by strength (0.0 - 1.0)
-    d = int(np.clip(5 + 6 * eff_strength, 3, 11))
-    sigma_color = int(np.clip(25 + 50 * eff_strength, 10, 85))
-    sigma_space = int(np.clip(15 + 40 * eff_strength, 10, 60))
+    eff_strength = min(1.0, max(0.0, eff_strength))
     
-    denoised = cv2.bilateralFilter(image, d=d, sigmaColor=sigma_color, sigmaSpace=sigma_space)
-    # Blend according to strength
-    result = cv2.addWeighted(denoised, eff_strength, image, float(1.0 - eff_strength), 0)
-    return result
+    # 1. Chroma-domain bilateral denoising in YCrCb (removes color blotches without touching edge sharpness)
+    ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
+    y, cr, cb = cv2.split(ycrcb)
+    
+    d = int(np.clip(3 + 4 * eff_strength, 3, 9))
+    sigma_c = int(np.clip(18 + 40 * eff_strength, 10, 65))
+    cr_clean = cv2.bilateralFilter(cr, d=d, sigmaColor=sigma_c, sigmaSpace=12)
+    cb_clean = cv2.bilateralFilter(cb, d=d, sigmaColor=sigma_c, sigmaSpace=12)
+    
+    # 2. Edge-guided luminance noise suppression
+    # Detect edges on luminance channel so text and contours stay 100% sharp
+    sobelx = cv2.Sobel(y, cv2.CV_32F, 1, 0, ksize=3)
+    sobely = cv2.Sobel(y, cv2.CV_32F, 0, 1, ksize=3)
+    edge_mag = np.sqrt(sobelx**2 + sobely**2)
+    # Edge mask: 1.0 on sharp edges/text, 0.0 on flat areas
+    edge_mask = np.clip(edge_mag / 24.0, 0.0, 1.0)
+    
+    # Bilateral smoothing applied only to flat/gradient regions
+    y_smooth = cv2.bilateralFilter(y, d=d, sigmaColor=int(20 * eff_strength + 10), sigmaSpace=10)
+    y_denoised = (y_smooth.astype(np.float32) * (1.0 - edge_mask) + y.astype(np.float32) * edge_mask).astype(np.uint8)
+    
+    y_final = cv2.addWeighted(y_denoised, eff_strength, y, float(1.0 - eff_strength), 0)
+    merged = cv2.merge([y_final, cr_clean, cb_clean])
+    return cv2.cvtColor(merged, cv2.COLOR_YCrCb2BGR)
 
 
 def segment_skin(image: np.ndarray) -> np.ndarray:
@@ -161,9 +179,10 @@ def segment_skin(image: np.ndarray) -> np.ndarray:
 def apply_portrait_retouch(image: np.ndarray, strength: float = 0.5) -> np.ndarray:
     """
     Wink-style portrait retouching:
-    1. Detect faces or segment skin regions
-    2. Apply dual-domain bilateral skin smoothing with 70/30 natural pore texture blending
-    3. Detect eyes and lips to apply localized contrast and sharpness boost
+    1. Detect faces or verify presence of prominent facial skin cluster
+    2. Guard against blurring non-face images (screenshots, UI, text, anime, landscape)
+    3. Apply dual-domain bilateral skin smoothing with 70/30 natural pore texture blending
+    4. Detect eyes and lips to apply localized contrast and sharpness boost
     """
     if strength <= 0.0:
         return image
@@ -178,27 +197,46 @@ def apply_portrait_retouch(image: np.ndarray, strength: float = 0.5) -> np.ndarr
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         det_scale = 0.5 if max(h, w) > 640 else 1.0
         small_gray = cv2.resize(gray, (0, 0), fx=det_scale, fy=det_scale) if det_scale < 1.0 else gray
-        faces = face_cascade.detectMultiScale(small_gray, scaleFactor=1.15, minNeighbors=3, minSize=(24, 24))
+        faces = face_cascade.detectMultiScale(small_gray, scaleFactor=1.12, minNeighbors=3, minSize=(20, 20))
         inv = 1.0 / det_scale
         face_boxes = [(int(round(fx * inv)), int(round(fy * inv)), int(round(fw * inv)), int(round(fh * inv))) for (fx, fy, fw, fh) in faces]
         
     # Get skin mask
     skin_mask = segment_skin(image)
     
-    # If face boxes exist, boost mask priority within face regions
-    if face_boxes:
+    # Face & Cluster Guard:
+    # If no Haar cascade faces were found, verify whether skin pixels form a genuine face cluster.
+    # In screenshots, games, landscapes, or text, skin-tone pixels are tiny scattered fragments (wood, orange buttons, icons).
+    if not face_boxes:
+        binary_skin = (skin_mask > 0.25).astype(np.uint8)
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_skin)
+        if num_labels <= 1:
+            return image
+        max_component_area = float(np.max(stats[1:, cv2.CC_STAT_AREA]))
+        total_pixels = float(h * w)
+        rel_area_pct = (max_component_area / total_pixels) * 100.0
+        
+        # If the largest skin-tone patch is under 4.0% or scattered over many tiny noisy patches, it is NOT a portrait!
+        if rel_area_pct < 4.0 or num_labels > 45:
+            return image
+            
+        # For low-res portraits where Haar cascade missed, only smooth the largest skin component
+        largest_label = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        cluster_mask = (labels == largest_label).astype(np.float32)
+        cluster_mask = cv2.GaussianBlur(cluster_mask, (11, 11), 3.0)
+        skin_mask = np.clip(skin_mask * cluster_mask, 0.0, 1.0)
+    else:
+        # Haar faces exist: restrict skin smoothing strictly to elliptical face regions
         face_mask = np.zeros((h, w), dtype=np.float32)
         for (fx, fy, fw, fh) in face_boxes:
-            # Elliptical face region
             center = (fx + fw // 2, fy + fh // 2)
             axes = (int(fw * 0.45), int(fh * 0.55))
             cv2.ellipse(face_mask, center, axes, 0, 0, 360, 1.0, -1)
         face_mask = cv2.GaussianBlur(face_mask, (15, 15), 5.0)
-        # Combine: prioritize face region skin
-        skin_mask = np.clip(skin_mask * 0.6 + (skin_mask * face_mask) * 0.4, 0.0, 1.0)
+        skin_mask = np.clip(skin_mask * face_mask, 0.0, 1.0)
         
     # Bilateral smoothing for skin
-    smoothed_skin = cv2.bilateralFilter(image, d=9, sigmaColor=75, sigmaSpace=75)
+    smoothed_skin = cv2.bilateralFilter(image, d=9, sigmaColor=65, sigmaSpace=65)
     
     # Natural pore texture preservation:
     # 70% smoothed + 30% original texture (scaled by retouch strength)
@@ -227,8 +265,8 @@ def apply_portrait_retouch(image: np.ndarray, strength: float = 0.5) -> np.ndarr
             lx_end = int(fx + fw * 0.75)
             
             for (y1, y2, x1, x2, boost_sharp, boost_contrast) in [
-                (ey_start, ey_end, ex_start, ex_end, 1.25, 1.15),  # Eyes
-                (ly_start, ly_end, lx_start, lx_end, 1.15, 1.12),  # Lips
+                (ey_start, ey_end, ex_start, ex_end, 1.30, 1.18),  # Eyes
+                (ly_start, ly_end, lx_start, lx_end, 1.20, 1.15),  # Lips
             ]:
                 if y2 > y1 and x2 > x1 and y1 >= 0 and y2 <= h and x1 >= 0 and x2 <= w:
                     roi = result[y1:y2, x1:x2].astype(np.float32)
@@ -240,7 +278,7 @@ def apply_portrait_retouch(image: np.ndarray, strength: float = 0.5) -> np.ndarr
                     
                     # Crisp unsharp mask for eyes/lips
                     roi_blur = cv2.GaussianBlur(roi_contrasted, (3, 3), 1.0)
-                    sharp_factor = (boost_sharp - 1.0) * float(strength) * 1.5
+                    sharp_factor = (boost_sharp - 1.0) * float(strength) * 1.8
                     roi_enhanced = np.clip(roi_contrasted + sharp_factor * (roi_contrasted - roi_blur), 0, 255)
                     
                     # Feathered blend for ROI
@@ -251,7 +289,7 @@ def apply_portrait_retouch(image: np.ndarray, strength: float = 0.5) -> np.ndarr
                         (int((x2 - x1) * 0.45), int((y2 - y1) * 0.45)),
                         0, 0, 360, 1.0, -1
                     )
-                    roi_mask = cv2.GaussianBlur(roi_mask, (7, 7), 2.0)[:, :, np.newaxis] if roi_mask.ndim == 2 else cv2.GaussianBlur(roi_mask, (7, 7), 2.0)
+                    roi_mask = cv2.GaussianBlur(roi_mask, (7, 7), 2.0)
                     if roi_mask.ndim == 2:
                         roi_mask = roi_mask[:, :, np.newaxis]
                         
@@ -315,7 +353,8 @@ def apply_vibrance_and_tone(
 ) -> np.ndarray:
     """
     Dynamic tone and vibrance boost:
-    1. LAB CLAHE on L-channel to expand dynamic range without chromatic shifting
+    1. LAB CLAHE on L-channel with adaptive grid size and highlight/shadow protection
+       (prevents blowing out white UI cards or crushing dark backgrounds)
     2. Intelligent non-linear saturation curve: boosts muted tones while protecting skin/vibrant areas
     Supports both `strength` and `vibrance` kwargs.
     """
@@ -323,16 +362,26 @@ def apply_vibrance_and_tone(
     if eff_vibrance <= 0.0:
         return image
         
-    # 1. LAB CLAHE on luminance
+    eff_vibrance = min(1.0, max(0.0, eff_vibrance))
+    h, w = image.shape[:2]
+    
+    # 1. LAB CLAHE on luminance with adaptive grid size
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     l_channel, a_channel, b_channel = cv2.split(lab)
+    l_float = l_channel.astype(np.float32)
     
-    clip_limit = 1.0 + 2.5 * eff_vibrance
-    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(8, 8))
-    l_enhanced = clahe.apply(l_channel)
+    grid_size = 8 if max(h, w) < 256 else (12 if max(h, w) < 1024 else 16)
+    clip_limit = 1.0 + 1.8 * eff_vibrance
+    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(grid_size, grid_size))
+    l_clahe = clahe.apply(l_channel).astype(np.float32)
+    
+    # Highlight & shadow protection to avoid blowing out whites or crushing blacks
+    protect = np.clip((l_float - 12.0) / 25.0, 0.0, 1.0) * np.clip((245.0 - l_float) / 25.0, 0.0, 1.0)
+    l_toned = l_float * (1.0 - protect * eff_vibrance * 0.8) + l_clahe * (protect * eff_vibrance * 0.8)
+    l_final = np.clip(l_toned, 0, 255).astype(np.uint8)
     
     # Recombine LAB
-    lab_enhanced = cv2.merge([l_enhanced, a_channel, b_channel])
+    lab_enhanced = cv2.merge([l_final, a_channel, b_channel])
     bgr_tone = cv2.cvtColor(lab_enhanced, cv2.COLOR_LAB2BGR)
     
     # 2. Intelligent non-linear vibrance curve in HSV
@@ -345,7 +394,7 @@ def apply_vibrance_and_tone(
     # Non-linear boost: delta_s = 1.0 - s_norm
     # Muted pixels (low s_norm) get maximum relative boost; saturated pixels stay protected
     delta_s = 1.0 - s_norm
-    s_boosted = s_norm + (eff_vibrance * 0.55 * delta_s * s_norm)
+    s_boosted = s_norm + (eff_vibrance * 0.45 * delta_s * s_norm)
     s_new = np.clip(s_boosted * 255.0, 0, 255).astype(np.float32)
     
     hsv_boosted = cv2.merge([h, s_new, v])
@@ -365,36 +414,46 @@ def apply_cas_sharpening(
     amount: Optional[float] = None,
 ) -> np.ndarray:
     """
-    Contrast-Adaptive Sharpening (CAS) and dual-frequency luminance unsharp masking.
-    Operates strictly on the L-channel in LAB space to eliminate color fringing and halo artifacts.
-    Provides crisp edge definition and micro-texture recovery.
+    Scale-adaptive Contrast-Adaptive Sharpening (CAS) and dual-frequency luminance unsharp masking.
+    Operates strictly on the L-channel in LAB space to eliminate color fringing.
+    Includes edge gradient weighting and soft non-linear saturation to completely eliminate white halos around text.
+    Provides crisp edge definition, vector-like lineart, and micro-texture recovery.
     Supports both `strength` and `amount` kwargs.
     """
     eff_amount = float(amount if amount is not None else strength)
     if eff_amount <= 0.0:
         return image
         
+    eff_amount = min(1.0, max(0.0, eff_amount))
+    h, w = image.shape[:2]
+    
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
     l_float = l.astype(np.float32)
     
+    # Scale-adaptive sigma so high-res images get proportional micro-detail
+    scale_ref = max(1.0, min(h, w) / 360.0)
+    sigma_fine = max(0.75, 0.65 * min(scale_ref, 4.0))
+    sigma_med = max(2.0, 1.6 * min(scale_ref, 4.0))
+    
     # Dual-frequency high-pass bands for fine details and structural contours
-    blur_fine = cv2.GaussianBlur(l_float, (0, 0), 1.0)
-    blur_med = cv2.GaussianBlur(l_float, (0, 0), 2.5)
+    blur_fine = cv2.GaussianBlur(l_float, (0, 0), sigma_fine)
+    blur_med = cv2.GaussianBlur(l_float, (0, 0), sigma_med)
     hp_fine = l_float - blur_fine
     hp_med = l_float - blur_med
-    hp = 0.65 * hp_fine + 0.85 * hp_med
+    hp = 0.70 * hp_fine + 0.60 * hp_med
     
-    # 3x3 local contrast window for adaptive control
-    kernel = np.ones((3, 3), np.uint8)
-    l_min = cv2.erode(l, kernel).astype(np.float32)
-    l_max = cv2.dilate(l, kernel).astype(np.float32)
-    contrast = l_max - l_min
-    adapt_weight = np.clip(1.0 + (contrast / 128.0), 0.8, 1.5)
+    # Sobel gradient for edge awareness (protects flat panels and skies from noise)
+    gx = cv2.Sobel(blur_fine, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(blur_fine, cv2.CV_32F, 0, 1, ksize=3)
+    edge_mag = np.sqrt(gx**2 + gy**2)
+    edge_weight = np.clip(edge_mag / 20.0, 0.2, 1.4)
     
-    # Adaptive sharpening gain
-    sharpen_gain = 0.8 + 2.0 * eff_amount
-    l_sharp = np.clip(l_float + sharpen_gain * adapt_weight * hp, 0, 255).astype(np.uint8)
+    # Anti-halo soft non-linear clamping (prevents ugly white halos around text letters & UI)
+    sharpen_gain = 1.0 + 3.0 * eff_amount
+    clamped_hp = np.tanh((hp * edge_weight * sharpen_gain) / 36.0) * 36.0
+    
+    l_sharp = np.clip(l_float + clamped_hp, 0, 255).astype(np.uint8)
     
     lab_sharp = cv2.merge([l_sharp, a, b])
     result = cv2.cvtColor(lab_sharp, cv2.COLOR_LAB2BGR)

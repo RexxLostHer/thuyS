@@ -34,8 +34,29 @@ class ComparisonSlider {
     this.isLoopActive = false;
     this.syncThreshold = 0.25; // 250ms drift threshold (PRD Section 2.5: prevents seek thrashing)
 
+    // Zoom and Loupe Inspection Engine
+    this.zoomLevel = 1.0;
+    this.panX = 0;
+    this.panY = 0;
+    this.isPanning = false;
+    this.panStartX = 0;
+    this.panStartY = 0;
+    this.loupeActive = false;
+    this.beforeUrl = null;
+    this.afterUrl = null;
+
+    this.btnZoomFit = document.getElementById('btnZoomFit');
+    this.btnZoom100 = document.getElementById('btnZoom100');
+    this.btnZoom200 = document.getElementById('btnZoom200');
+    this.btnLoupeToggle = document.getElementById('btnLoupeToggle');
+    this.magnifierLoupe = document.getElementById('magnifierLoupe');
+    this.loupeInnerBefore = document.getElementById('loupeInnerBefore');
+    this.loupeInnerAfter = document.getElementById('loupeInnerAfter');
+    this.loupeDivider = document.getElementById('loupeDivider');
+
     this.initSliderEvents();
     this.initVideoControlEvents();
+    this.initZoomAndLoupeEvents();
     this.updatePosition(50);
   }
 
@@ -97,6 +118,8 @@ class ComparisonSlider {
   setImageComparison(beforeUrl, afterUrl) {
     this.cleanupVideoSync();
     this.mode = 'image';
+    this.beforeUrl = beforeUrl;
+    this.afterUrl = afterUrl;
     this.videoControls.style.display = 'none';
 
     if (this.canvas) {
@@ -106,10 +129,12 @@ class ComparisonSlider {
     this.layerAfter.style.display = 'flex';
 
     this.layerBefore.innerHTML = `<img src="${beforeUrl}" class="comparison-media" alt="Original Low-Res">`;
-    this.layerAfter.innerHTML = `<img src="${afterUrl}" class="comparison-media" alt="Wink HD Enhanced">`;
+    this.layerAfter.innerHTML = `<img src="${afterUrl}" class="comparison-media" alt="Lumina HD Enhanced">`;
 
     this.container.style.display = 'block';
+    this.resetZoom();
     this.updatePosition(50);
+    this.updateLoupeAssets();
   }
 
   /**
@@ -517,6 +542,185 @@ class ComparisonSlider {
       : `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
   }
 
+  /**
+   * Interactive Zoom, Pan, and Magnifier Loupe Engine
+   */
+  initZoomAndLoupeEvents() {
+    if (this.btnZoomFit) {
+      this.btnZoomFit.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.setZoom(1.0);
+      });
+    }
+    if (this.btnZoom100) {
+      this.btnZoom100.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.setZoom(2.0);
+      });
+    }
+    if (this.btnZoom200) {
+      this.btnZoom200.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.setZoom(3.5);
+      });
+    }
+    if (this.btnLoupeToggle) {
+      this.btnLoupeToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.toggleLoupe();
+      });
+    }
+
+    // Wheel Zoom
+    this.container.addEventListener('wheel', (e) => {
+      if (this.mode !== 'image') return;
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.35 : -0.35;
+      const targetZoom = Math.max(1.0, Math.min(5.0, this.zoomLevel + delta));
+      this.setZoom(targetZoom);
+    }, { passive: false });
+
+    // Panning drag handlers when zoomed in
+    const onPanStart = (e) => {
+      if (this.zoomLevel <= 1.0) return;
+      // Do not pan if dragging slider divider
+      if (e.target.closest('#sliderHandle') || e.target.closest('#comparisonToolbar')) return;
+      this.isPanning = true;
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      this.panStartX = clientX - this.panX;
+      this.panStartY = clientY - this.panY;
+      this.container.classList.add('is-panning');
+    };
+
+    const onPanMove = (e) => {
+      if (!this.isPanning) return;
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      this.panX = clientX - this.panStartX;
+      this.panY = clientY - this.panStartY;
+      this.applyTransform();
+    };
+
+    const onPanEnd = () => {
+      if (this.isPanning) {
+        this.isPanning = false;
+        this.container.classList.remove('is-panning');
+      }
+    };
+
+    this.container.addEventListener('mousedown', onPanStart);
+    window.addEventListener('mousemove', onPanMove);
+    window.addEventListener('mouseup', onPanEnd);
+
+    this.container.addEventListener('touchstart', onPanStart, { passive: true });
+    window.addEventListener('touchmove', onPanMove, { passive: true });
+    window.addEventListener('touchend', onPanEnd);
+
+    // Loupe pointer tracking
+    const updateLoupe = (e) => {
+      if (!this.loupeActive || !this.magnifierLoupe) return;
+      const rect = this.container.getBoundingClientRect();
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+
+      if (x < 0 || x > rect.width || y < 0 || y > rect.height) {
+        this.magnifierLoupe.style.display = 'none';
+        return;
+      }
+
+      this.magnifierLoupe.style.display = 'block';
+      this.magnifierLoupe.style.left = `${x}px`;
+      this.magnifierLoupe.style.top = `${y}px`;
+
+      const zoomFactor = 2.6;
+      const bgW = rect.width * zoomFactor;
+      const bgH = rect.height * zoomFactor;
+      const bgX = -(x * zoomFactor - 95);
+      const bgY = -(y * zoomFactor - 95);
+
+      if (this.loupeInnerBefore) {
+        this.loupeInnerBefore.style.backgroundSize = `${bgW}px ${bgH}px`;
+        this.loupeInnerBefore.style.backgroundPosition = `${bgX}px ${bgY}px`;
+      }
+      if (this.loupeInnerAfter) {
+        this.loupeInnerAfter.style.backgroundSize = `${bgW}px ${bgH}px`;
+        this.loupeInnerAfter.style.backgroundPosition = `${bgX}px ${bgY}px`;
+      }
+
+      // Synchronize slider split line inside the loupe
+      const sliderX = (this.position / 100) * rect.width;
+      const loupeLeft = x - 95;
+      const splitInsideLoupe = Math.max(0, Math.min(100, ((sliderX - loupeLeft) / 190) * 100));
+      this.container.style.setProperty('--loupe-split', `${splitInsideLoupe}%`);
+    };
+
+    this.container.addEventListener('mousemove', updateLoupe);
+    this.container.addEventListener('touchmove', updateLoupe, { passive: true });
+    this.container.addEventListener('mouseleave', () => {
+      if (this.magnifierLoupe) this.magnifierLoupe.style.display = 'none';
+    });
+  }
+
+  setZoom(level) {
+    this.zoomLevel = level;
+    if (level <= 1.0) {
+      this.panX = 0;
+      this.panY = 0;
+      this.container.classList.remove('is-zoomed');
+    } else {
+      this.container.classList.add('is-zoomed');
+    }
+
+    [this.btnZoomFit, this.btnZoom100, this.btnZoom200].forEach((btn) => {
+      if (btn) btn.classList.remove('active');
+    });
+
+    if (level <= 1.1 && this.btnZoomFit) {
+      this.btnZoomFit.classList.add('active');
+    } else if (level < 2.5 && this.btnZoom100) {
+      this.btnZoom100.classList.add('active');
+    } else if (this.btnZoom200) {
+      this.btnZoom200.classList.add('active');
+    }
+
+    this.applyTransform();
+  }
+
+  resetZoom() {
+    this.setZoom(1.0);
+  }
+
+  applyTransform() {
+    this.container.style.setProperty('--zoom-scale', this.zoomLevel);
+    this.container.style.setProperty('--pan-x', `${this.panX}px`);
+    this.container.style.setProperty('--pan-y', `${this.panY}px`);
+  }
+
+  toggleLoupe() {
+    this.loupeActive = !this.loupeActive;
+    if (this.btnLoupeToggle) {
+      this.btnLoupeToggle.classList.toggle('active', this.loupeActive);
+    }
+    if (!this.loupeActive && this.magnifierLoupe) {
+      this.magnifierLoupe.style.display = 'none';
+    } else {
+      this.updateLoupeAssets();
+    }
+  }
+
+  updateLoupeAssets() {
+    if (!this.beforeUrl || !this.afterUrl) return;
+    if (this.loupeInnerBefore) {
+      this.loupeInnerBefore.style.backgroundImage = `url("${this.beforeUrl}")`;
+    }
+    if (this.loupeInnerAfter) {
+      this.loupeInnerAfter.style.backgroundImage = `url("${this.afterUrl}")`;
+    }
+  }
+
   formatTime(seconds) {
     if (!seconds || isNaN(seconds)) return '00:00';
     const m = Math.floor(seconds / 60);
@@ -560,6 +764,8 @@ class ComparisonSlider {
     }
     this.layerBefore.innerHTML = '';
     this.layerAfter.innerHTML = '';
+    this.resetZoom();
+    if (this.magnifierLoupe) this.magnifierLoupe.style.display = 'none';
     this.container.style.display = 'none';
     this.videoControls.style.display = 'none';
   }
