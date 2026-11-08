@@ -241,6 +241,7 @@ async def api_enhance_image(
     vibrance: float = Form(0.3),
     denoise: float = Form(0.3),
     task_id: Optional[str] = Form(None),
+    enforce_min_1080p: Optional[bool] = Form(None),
 ):
     """
     Non-blocking Image Enhancement Endpoint with Real-Time SSE Stage Progress (1% -> 100%).
@@ -339,6 +340,7 @@ async def api_enhance_image(
             sharpen=sharpen,
             vibrance=vibrance,
             denoise=denoise,
+            enforce_min_1080p=enforce_min_1080p,
             progress_callback=sync_progress_cb,
         )
     except Exception as exc:

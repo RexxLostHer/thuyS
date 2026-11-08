@@ -128,8 +128,8 @@ class ComparisonSlider {
     this.layerBefore.style.display = 'flex';
     this.layerAfter.style.display = 'flex';
 
-    this.layerBefore.innerHTML = `<img src="${beforeUrl}" class="comparison-media" alt="Original Low-Res">`;
-    this.layerAfter.innerHTML = `<img src="${afterUrl}" class="comparison-media" alt="Lumina HD Enhanced">`;
+    this.layerBefore.innerHTML = `<img src="${beforeUrl}" class="comparison-media before-media" alt="Original Low-Res" style="image-rendering: auto;">`;
+    this.layerAfter.innerHTML = `<img src="${afterUrl}" class="comparison-media after-media" alt="Wink HD Enhanced" style="image-rendering: auto; image-rendering: high-quality;">`;
 
     this.container.style.display = 'block';
     this.resetZoom();

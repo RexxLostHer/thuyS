@@ -330,6 +330,14 @@ body {
   transform: translateZ(0);
   will-change: transform;
   backface-visibility: hidden;
+  image-rendering: auto;
+  image-rendering: high-quality;
+}
+
+.layer-after .comparison-media,
+.comparison-media.after-media {
+  image-rendering: auto !important;
+  image-rendering: high-quality !important;
 }
 
 /* Bulletproof Canvas Video Comparison Surface */
