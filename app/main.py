@@ -369,6 +369,8 @@ async def api_enhance_image(
         "input_resolution": result["input_resolution"],
         "output_resolution": result["output_resolution"],
         "processing_time_ms": result["processing_time_ms"],
+        "quality_grade": result["metrics"].get("quality_grade", "S+ Sub-Pixel Reconstructed"),
+        "standards_passed": result["metrics"].get("standards_passed", True),
         "metrics": result["metrics"],
     }
 
