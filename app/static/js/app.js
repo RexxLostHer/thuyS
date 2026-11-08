@@ -468,11 +468,36 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (currentMode === 'image') {
       try {
-        updateProgressUI('Enhancing', 40, 0, 'Applying Lanczos-4, Retouch & CAS...');
+        const taskId = 'img_' + Math.random().toString(36).substring(2, 10);
+        formData.append('task_id', taskId);
+
+        // Real-Time SSE stage progress listener (1% -> 100%)
+        let imageEventSource = null;
+        try {
+          imageEventSource = new EventSource(`/api/tasks/${taskId}/events`);
+          imageEventSource.onmessage = (e) => {
+            try {
+              const eventData = JSON.parse(e.data);
+              if (eventData.status === 'processing' && eventData.percent) {
+                updateProgressUI(
+                  eventData.stage || 'Enhancing',
+                  eventData.percent,
+                  0,
+                  eventData.message || 'Processing Ultra-HD stage...'
+                );
+              }
+            } catch (err) {}
+          };
+        } catch (e) {}
+
         const res = await fetch('/api/enhance/image', {
           method: 'POST',
           body: formData,
         });
+
+        if (imageEventSource) {
+          try { imageEventSource.close(); } catch (e) {}
+        }
 
         if (!res.ok) {
           const errData = await res.json().catch(() => ({ detail: 'Unknown server error' }));
@@ -480,19 +505,22 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const data = await res.json();
-        updateProgressUI('Completed', 100, 0, 'Enhancement complete!');
+        const m = data.metrics || {};
+        updateProgressUI('Completed', 100, 0, `Stage 8/8: Ultra-HD Enhancement Complete! (${m.quality_grade || 'S+ Ultra-HD'})`);
 
         latestOutputUrl = data.output_url;
-        slider.setImageComparison(data.input_url, data.output_url);
+        slider.setImageComparison(appendCacheBuster(data.input_url), appendCacheBuster(data.output_url));
 
-        const inDim = data.input_resolution.join('x');
-        const outDim = data.output_resolution.join('x');
-        const gain = data.metrics ? `${((data.metrics.sharpness_gain - 1) * 100).toFixed(1)}% Gain (${data.metrics.psnr_baseline} dB)` : 'Optimal';
+        const inDim = Array.isArray(data.input_resolution) ? data.input_resolution.join('x') : 'Original';
+        const outDim = Array.isArray(data.output_resolution) ? data.output_resolution.join('x') : 'HD';
+        const gainText = m.quality_grade
+          ? `${m.quality_grade} • +${m.tenengrad_gain || m.tenengrad_improvement_pct || 0}% Sharpness (${m.halo_overshoot_pct != null ? m.halo_overshoot_pct + '% Halo' : '0% Halo'})`
+          : (m.sharpness_gain ? `${((m.sharpness_gain - 1) * 100).toFixed(1)}% Gain (${m.psnr_baseline} dB)` : 'Optimal');
 
         showExportMetrics({
           resolution: `${inDim} ➔ ${outDim} (${upscaleFactor}x HD)`,
-          time: `${data.processing_time_ms} ms`,
-          gain: gain,
+          time: `${((data.processing_time_ms || 0) / 1000).toFixed(2)}s`,
+          gain: gainText,
         });
       } catch (err) {
         alert(`Error: ${err.message}`);
@@ -500,6 +528,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } finally {
         finishProcessing();
       }
+    }
     } else {
       // Video Enhancement via SSE with Fallback Polling
       try {

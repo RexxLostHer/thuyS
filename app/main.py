@@ -240,9 +240,10 @@ async def api_enhance_image(
     sharpen: float = Form(0.5),
     vibrance: float = Form(0.3),
     denoise: float = Form(0.3),
+    task_id: Optional[str] = Form(None),
 ):
     """
-    Enhance an uploaded image using super-resolution, portrait retouching, and CAS sharpening.
+    Non-blocking Image Enhancement Endpoint with Real-Time SSE Stage Progress (1% -> 100%).
     """
     # Validate parameters
     if upscale_factor not in (1, 2, 4):
@@ -270,23 +271,67 @@ async def api_enhance_image(
     elif len(decoded_img.shape) == 2:
         decoded_img = cv2.cvtColor(decoded_img, cv2.COLOR_GRAY2BGR)
 
-    task_id = uuid.uuid4().hex[:12]
+    tid = task_id or uuid.uuid4().hex[:12]
     orig_ext = Path(file.filename).suffix.lower() if file.filename else ".png"
     if orig_ext not in (".png", ".jpg", ".jpeg", ".webp", ".bmp"):
         orig_ext = ".png"
 
-    in_filename = f"upload_img_{task_id}{orig_ext}"
-    out_filename = f"enhanced_img_{task_id}.png"
+    in_filename = f"upload_img_{tid}{orig_ext}"
+    out_filename = f"enhanced_img_{tid}.png"
 
     in_path = MEDIA_DIR / in_filename
     out_path = MEDIA_DIR / out_filename
+    input_url = f"/media/{in_filename}"
+    output_url = f"/media/{out_filename}"
 
     # Save input image
     cv2.imwrite(str(in_path), decoded_img)
 
+    if tid not in TASKS:
+        TASKS[tid] = {
+            "task_id": tid,
+            "status": "processing",
+            "stage": "uploading",
+            "percent": 1.0,
+            "fps": 0.0,
+            "message": "Stage 1/8: Uploading & initializing Ultra-HD pipeline...",
+            "history": [],
+            "queue": asyncio.Queue(),
+            "created_at": time.time(),
+            "input_url": input_url,
+            "output_url": output_url,
+        }
+
+    task = TASKS[tid]
+    loop = asyncio.get_running_loop()
+
+    def sync_progress_cb(stage: str, percent: float, fps: float, message: str):
+        if stage == "completed":
+            return
+        event = {
+            "task_id": tid,
+            "status": "processing",
+            "stage": stage,
+            "percent": round(percent, 1),
+            "fps": round(fps, 1),
+            "message": message,
+            "input_url": input_url,
+            "output_url": output_url,
+        }
+        task["status"] = "processing"
+        task["stage"] = stage
+        task["percent"] = round(percent, 1)
+        task["message"] = message
+        task["history"].append(event)
+        try:
+            loop.call_soon_threadsafe(task["queue"].put_nowait, event)
+        except Exception:
+            pass
+
     try:
-        # Run enhancement
-        result = enhance_image(
+        # Run enhancement in thread pool to avoid blocking FastAPI event loop
+        result = await asyncio.to_thread(
+            enhance_image,
             input_path=str(in_path),
             output_path=str(out_path),
             upscale_factor=upscale_factor,
@@ -294,20 +339,61 @@ async def api_enhance_image(
             sharpen=sharpen,
             vibrance=vibrance,
             denoise=denoise,
+            progress_callback=sync_progress_cb,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Enhancement failed: {str(exc)}")
+        err_msg = str(exc)
+        err_event = {
+            "task_id": tid,
+            "status": "failed",
+            "stage": "failed",
+            "percent": task.get("percent", 0.0),
+            "fps": 0.0,
+            "message": f"Image enhancement failed: {err_msg}",
+            "error": err_msg,
+        }
+        task["status"] = "failed"
+        task["error"] = err_msg
+        task["history"].append(err_event)
+        try:
+            task["queue"].put_nowait(err_event)
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"Enhancement failed: {err_msg}")
 
-    return {
+    response_payload = {
         "status": "success",
-        "task_id": task_id,
-        "input_url": f"/media/{in_filename}",
-        "output_url": f"/media/{out_filename}",
+        "task_id": tid,
+        "input_url": input_url,
+        "output_url": output_url,
         "input_resolution": result["input_resolution"],
         "output_resolution": result["output_resolution"],
         "processing_time_ms": result["processing_time_ms"],
         "metrics": result["metrics"],
     }
+
+    final_event = {
+        "task_id": tid,
+        "status": "completed",
+        "stage": "completed",
+        "percent": 100.0,
+        "fps": 0.0,
+        "message": f"Stage 8/8: Ultra-HD Enhancement Complete! ({result['metrics'].get('quality_grade', 'S+ Ultra-HD')})",
+        "input_url": input_url,
+        "output_url": output_url,
+        "result": response_payload,
+    }
+    task["status"] = "completed"
+    task["stage"] = "completed"
+    task["percent"] = 100.0
+    task["result"] = response_payload
+    task["history"].append(final_event)
+    try:
+        task["queue"].put_nowait(final_event)
+    except Exception:
+        pass
+
+    return response_payload
 
 
 async def _run_video_enhancer_task(
