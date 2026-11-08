@@ -528,7 +528,6 @@ document.addEventListener('DOMContentLoaded', () => {
       } finally {
         finishProcessing();
       }
-    }
     } else {
       // Video Enhancement via SSE with Fallback Polling
       try {
