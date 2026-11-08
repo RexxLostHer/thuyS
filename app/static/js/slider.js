@@ -32,7 +32,7 @@ class ComparisonSlider {
     this.syncRafId = null;
     this.videoCallbackId = null;
     this.isLoopActive = false;
-    this.syncThreshold = 0.04; // 40ms drift threshold
+    this.syncThreshold = 0.25; // 250ms drift threshold (PRD Section 2.5: prevents seek thrashing)
 
     this.initSliderEvents();
     this.initVideoControlEvents();
@@ -124,6 +124,7 @@ class ComparisonSlider {
       videoElement.muted = true;
       videoElement.playsInline = true;
       videoElement.preload = 'auto';
+      videoElement.crossOrigin = 'anonymous';
 
       const srcUrl = typeof fileOrUrl === 'string'
         ? fileOrUrl
@@ -134,6 +135,7 @@ class ComparisonSlider {
       }
 
       let isResolved = false;
+      let hasTriggeredSeek = false;
       const cleanupListeners = () => {
         videoElement.removeEventListener('loadeddata', onReady);
         videoElement.removeEventListener('canplay', onReady);
@@ -165,9 +167,11 @@ class ComparisonSlider {
       };
 
       const onReady = () => {
+        if (hasTriggeredSeek) return;
         if (videoElement.videoWidth === 0 || videoElement.videoHeight === 0) {
           return;
         }
+        hasTriggeredSeek = true;
         // Force seek to frame 1 (0.05s) to push frame to GPU buffer
         try {
           videoElement.currentTime = 0.05;
@@ -237,17 +241,17 @@ class ComparisonSlider {
     if (!mount) {
       mount = document.createElement('div');
       mount.id = 'videoMediaMount';
-      mount.style.position = 'fixed';
-      mount.style.bottom = '0';
-      mount.style.right = '0';
-      mount.style.width = '4px';
-      mount.style.height = '4px';
-      mount.style.opacity = '0.01';
-      mount.style.pointerEvents = 'none';
-      mount.style.zIndex = '-999';
-      mount.style.overflow = 'hidden';
       document.body.appendChild(mount);
     }
+    mount.style.position = 'fixed';
+    mount.style.bottom = '0';
+    mount.style.right = '0';
+    mount.style.width = '4px';
+    mount.style.height = '4px';
+    mount.style.opacity = '0.01';
+    mount.style.pointerEvents = 'none';
+    mount.style.zIndex = '-999';
+    mount.style.overflow = 'hidden';
     mount.innerHTML = '';
     slave.style.width = '4px';
     slave.style.height = '4px';
@@ -308,29 +312,44 @@ class ComparisonSlider {
 
     const splitX = Math.round(w * (this.position / 100));
 
-    this.ctx.clearRect(0, 0, w, h);
+    const slaveReady = this.slaveVideo.videoWidth > 0 && this.slaveVideo.readyState >= 2;
+    const masterReady = this.masterVideo.videoWidth > 0 && this.masterVideo.readyState >= 2;
+
+    // PRD Section 2.5: Do not clear canvas if videos are seeking (readyState < 2),
+    // preserving the last valid frame on screen without flickering black
+    if (!slaveReady && !masterReady) {
+      return;
+    }
+
+    if (slaveReady && masterReady) {
+      this.ctx.clearRect(0, 0, w, h);
+    }
 
     // 1. Sisi Kiri: Original Low-Res (Slave)
-    if (splitX > 0 && this.slaveVideo.videoWidth > 0 && this.slaveVideo.readyState >= 2) {
+    if (splitX > 0 && slaveReady) {
       this.ctx.save();
       this.ctx.beginPath();
       this.ctx.rect(0, 0, splitX, h);
       this.ctx.clip();
       try {
         this.ctx.drawImage(this.slaveVideo, 0, 0, w, h);
-      } catch (e) {}
+      } catch (e) {
+        console.warn('drawVideoFrames slave error:', e);
+      }
       this.ctx.restore();
     }
 
     // 2. Sisi Kanan: Wink HD Enhanced (Master)
-    if (splitX < w && this.masterVideo.videoWidth > 0 && this.masterVideo.readyState >= 2) {
+    if (splitX < w && masterReady) {
       this.ctx.save();
       this.ctx.beginPath();
       this.ctx.rect(splitX, 0, w - splitX, h);
       this.ctx.clip();
       try {
         this.ctx.drawImage(this.masterVideo, 0, 0, w, h);
-      } catch (e) {}
+      } catch (e) {
+        console.warn('drawVideoFrames master error:', e);
+      }
       this.ctx.restore();
     }
   }

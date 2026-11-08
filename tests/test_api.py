@@ -244,7 +244,7 @@ def test_enhance_video_task_and_sse_lifecycle(client, sample_video_path):
                 if payload.get("status") in ("completed", "error"):
                     break
 
-    assert len(events_received) > 0
+    assert len(events_received) >= 5
     final_event = events_received[-1]
     assert final_event["status"] == "completed"
     assert final_event["percent"] == 100.0

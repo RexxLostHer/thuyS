@@ -62,6 +62,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let latestOutputUrl = null;
   let sampleData = null;
   let activeEventSource = null;
+  let activeFallbackInterval = null;
 
   // Initialize Comparison Slider
   const slider = new ComparisonSlider({
@@ -73,6 +74,16 @@ document.addEventListener('DOMContentLoaded', () => {
     videoControls: document.getElementById('videoControlsBar'),
   });
   window.sliderInstance = slider;
+
+  /**
+   * Appends cache buster timestamp to HTTP media URLs while safely preserving blob: and data: schemes.
+   */
+  function appendCacheBuster(url) {
+    if (!url || typeof url !== 'string') return '';
+    if (url.startsWith('blob:') || url.startsWith('data:')) return url;
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}t=${Date.now()}`;
+  }
 
   // Check Backend Health
   async function checkHealth() {
@@ -255,7 +266,7 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     } else if (currentMode === 'video' && sampleData.video) {
       const s = sampleData.video;
-      slider.setVideoComparison(s.lowres_url + '?t=' + Date.now(), s.enhanced_url + '?t=' + Date.now());
+      slider.setVideoComparison(appendCacheBuster(s.lowres_url), appendCacheBuster(s.enhanced_url));
       latestOutputUrl = s.enhanced_url;
       showExportMetrics({
         resolution: `${s.lowres_res.join('x')} ➔ ${s.enhanced_res.join('x')} (${s.upscale_factor}x HD)`,
@@ -264,6 +275,133 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
   });
+
+  /**
+   * Modular SSE progress stream listener with 3-tier URL resolution fallback and cache busting.
+   */
+  function pollVideoTaskProgress(taskId, params, initData = {}) {
+    if (activeEventSource) {
+      try { activeEventSource.close(); } catch (e) {}
+      activeEventSource = null;
+    }
+    if (activeFallbackInterval) {
+      clearInterval(activeFallbackInterval);
+      activeFallbackInterval = null;
+    }
+
+    const eventSource = new EventSource(`/api/tasks/${taskId}/events`);
+    activeEventSource = eventSource;
+    let isFinished = false;
+
+    const handleCompletion = (data) => {
+      if (isFinished) return;
+      isFinished = true;
+      if (activeEventSource) {
+        try { activeEventSource.close(); } catch (e) {}
+        activeEventSource = null;
+      }
+      if (activeFallbackInterval) {
+        clearInterval(activeFallbackInterval);
+        activeFallbackInterval = null;
+      }
+
+      const resObj = data.result || {};
+      const rawInUrl = resObj.input_url || data.input_url || initData.input_url;
+      const rawOutUrl = resObj.output_url || data.output_url || initData.output_url;
+
+      updateProgressUI('Completed', 100, resObj.fps || 30, 'Video Enhancement Complete!');
+
+      setTimeout(() => {
+        progressHud.style.display = 'none';
+        slider.setVideoComparison(appendCacheBuster(rawInUrl), appendCacheBuster(rawOutUrl));
+        latestOutputUrl = rawOutUrl;
+
+        const inRes = Array.isArray(resObj.input_resolution) ? resObj.input_resolution.join('x') : 'Original';
+        const outRes = Array.isArray(resObj.output_resolution) ? resObj.output_resolution.join('x') : 'HD';
+        const procSec = ((resObj.processing_time_ms || 0) / 1000).toFixed(2);
+
+        showExportMetrics({
+          resolution: `${inRes} ➔ ${outRes} (${params.upscale_factor || upscaleFactor}x HD)`,
+          time: `${procSec}s`,
+          gain: 'Lossless AAC Audio Sync • 0 AV Drift',
+        });
+        finishProcessing();
+      }, 300);
+    };
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (data.status === 'processing') {
+          const fps = data.fps || 0;
+          updateProgressUI(data.stage || 'enhancing', data.percent || 5, fps, data.message || '');
+        } else if (data.status === 'completed' || data.stage === 'completed') {
+          handleCompletion(data);
+        } else if (data.status === 'failed' || data.stage === 'failed' || data.status === 'error') {
+          isFinished = true;
+          if (activeEventSource) {
+            try { activeEventSource.close(); } catch (e) {}
+            activeEventSource = null;
+          }
+          alert(`Video Enhancement Failed: ${data.error || data.message}`);
+          resetWorkspace();
+          finishProcessing();
+        }
+      } catch (e) {
+        console.error('Failed to parse SSE message:', e);
+      }
+    };
+
+    eventSource.onerror = () => {
+      if (isFinished) return;
+      if (activeEventSource) {
+        try { activeEventSource.close(); } catch (e) {}
+        activeEventSource = null;
+      }
+      pollFallback(taskId, params, initData, handleCompletion);
+    };
+  }
+
+  /**
+   * Resilient HTTP polling fallback when SSE drops or is unavailable.
+   */
+  function pollFallback(taskId, params, initData, onCompleteFn) {
+    if (activeFallbackInterval) {
+      clearInterval(activeFallbackInterval);
+      activeFallbackInterval = null;
+    }
+
+    activeFallbackInterval = setInterval(async () => {
+      try {
+        let res = await fetch(`/api/tasks/${taskId}`);
+        if (!res.ok) {
+          res = await fetch(`/api/status/${taskId}`);
+        }
+        if (!res.ok) return;
+        const data = await res.json();
+
+        if (data.status === 'processing') {
+          const fps = data.fps || 0;
+          updateProgressUI(data.stage || 'enhancing', data.percent || 5, fps, data.message || '');
+        } else if (data.status === 'completed' || data.stage === 'completed') {
+          if (activeFallbackInterval) {
+            clearInterval(activeFallbackInterval);
+            activeFallbackInterval = null;
+          }
+          onCompleteFn(data);
+        } else if (data.status === 'failed' || data.stage === 'failed' || data.status === 'error') {
+          if (activeFallbackInterval) {
+            clearInterval(activeFallbackInterval);
+            activeFallbackInterval = null;
+          }
+          alert(`Video Enhancement Failed: ${data.error || data.message}`);
+          resetWorkspace();
+          finishProcessing();
+        }
+      } catch (e) {}
+    }, 1000);
+  }
 
   // Primary Action: "Enhance HD"
   btnEnhance.addEventListener('click', async () => {
@@ -325,7 +463,7 @@ document.addEventListener('DOMContentLoaded', () => {
         finishProcessing();
       }
     } else {
-      // Video Enhancement via SSE
+      // Video Enhancement via SSE with Fallback Polling
       try {
         const res = await fetch('/api/enhance/video', {
           method: 'POST',
@@ -338,53 +476,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const initial = await res.json();
-        const taskId = initial.task_id;
-        const inputUrl = initial.input_url;
-
-        // Open SSE connection
-        if (activeEventSource) {
-          activeEventSource.close();
-        }
-
-        activeEventSource = new EventSource(`/api/progress/${taskId}`);
-
-        activeEventSource.onmessage = (event) => {
-          try {
-            const ev = JSON.parse(event.data);
-            updateProgressUI(ev.stage, ev.percent, ev.fps, ev.message);
-
-            if (ev.status === 'completed' || ev.stage === 'completed') {
-              activeEventSource.close();
-              activeEventSource = null;
-
-              latestOutputUrl = ev.output_url;
-              const freshIn = inputUrl + '?t=' + Date.now();
-              const freshOut = ev.output_url + '?t=' + Date.now();
-              slider.setVideoComparison(freshIn, freshOut);
-
-              const resMeta = ev.result || {};
-              showExportMetrics({
-                resolution: `${upscaleFactor}x Ultra HD`,
-                time: `${resMeta.fps || 0} FPS processing`,
-                gain: 'Bit-Exact AAC Audio Remuxed',
-              });
-
-              finishProcessing();
-            } else if (ev.status === 'error' || ev.stage === 'failed') {
-              activeEventSource.close();
-              activeEventSource = null;
-              alert(`Video enhancement failed: ${ev.message || ev.error}`);
-              resetWorkspace();
-              finishProcessing();
-            }
-          } catch (e) {
-            console.error('Error parsing SSE event:', e);
-          }
-        };
-
-        activeEventSource.onerror = (err) => {
-          console.warn('SSE stream notice/error:', err);
-        };
+        pollVideoTaskProgress(initial.task_id, { upscale_factor: upscaleFactor }, initial);
       } catch (err) {
         alert(`Error: ${err.message}`);
         resetWorkspace();
@@ -431,8 +523,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function resetWorkspace() {
     if (activeEventSource) {
-      activeEventSource.close();
+      try { activeEventSource.close(); } catch (e) {}
       activeEventSource = null;
+    }
+    if (activeFallbackInterval) {
+      clearInterval(activeFallbackInterval);
+      activeFallbackInterval = null;
     }
     slider.reset();
     dropzone.style.display = 'flex';

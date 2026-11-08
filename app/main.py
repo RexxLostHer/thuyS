@@ -10,6 +10,7 @@ import uuid
 import json
 import shutil
 import asyncio
+import threading
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -17,7 +18,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -274,8 +275,16 @@ async def _run_video_enhancer_task(
 ):
     """Asynchronous background worker executing video enhancement pipeline."""
     task = TASKS[task_id]
+    input_url = f"/media/{in_path.name}"
+    output_url = f"/media/{out_path.name}"
 
     async def progress_callback(stage: str, percent: float, fps: float, message: str = ""):
+        # Avoid race condition: do not overwrite terminal state if task already finished
+        if task.get("status") in ("completed", "failed"):
+            return
+        # Avoid duplicate completion event without result payload
+        if stage == "completed":
+            return
         event = {
             "task_id": task_id,
             "status": "processing",
@@ -283,6 +292,8 @@ async def _run_video_enhancer_task(
             "percent": round(percent, 1),
             "fps": round(fps, 1),
             "message": message,
+            "input_url": input_url,
+            "output_url": output_url,
         }
         task["status"] = "processing"
         task["stage"] = stage
@@ -290,7 +301,10 @@ async def _run_video_enhancer_task(
         task["fps"] = round(fps, 1)
         task["message"] = message
         task["history"].append(event)
-        await task["queue"].put(event)
+        try:
+            task["queue"].put_nowait(event)
+        except Exception:
+            pass
 
     try:
         task["status"] = "processing"
@@ -305,42 +319,56 @@ async def _run_video_enhancer_task(
             progress_callback=progress_callback,
         )
 
+        # WAJIB: Embed input_url and output_url into result so frontend data.result.input_url is never undefined
+        result["input_url"] = input_url
+        result["output_url"] = output_url
+
         final_event = {
             "task_id": task_id,
             "status": "completed",
             "stage": "completed",
             "percent": 100.0,
-            "fps": 0.0,
+            "fps": result.get("fps", 0.0),
             "message": "Video enhancement completed successfully",
-            "output_url": f"/media/{out_path.name}",
+            "input_url": input_url,
+            "output_url": output_url,
             "result": result,
         }
         task["status"] = "completed"
         task["stage"] = "completed"
         task["percent"] = 100.0
-        task["output_url"] = f"/media/{out_path.name}"
+        task["input_url"] = input_url
+        task["output_url"] = output_url
         task["result"] = result
         task["final_event"] = final_event
         task["history"].append(final_event)
-        await task["queue"].put(final_event)
+        try:
+            task["queue"].put_nowait(final_event)
+        except Exception:
+            pass
 
     except Exception as exc:
         err_msg = str(exc)
-        error_event = {
+        err_event = {
             "task_id": task_id,
-            "status": "error",
+            "status": "failed",
             "stage": "failed",
-            "percent": 0.0,
+            "percent": task.get("percent", 0.0),
             "fps": 0.0,
-            "message": f"Enhancement failed: {err_msg}",
+            "message": f"Video enhancement error: {err_msg}",
             "error": err_msg,
+            "input_url": input_url,
+            "output_url": None,
         }
-        task["status"] = "error"
+        task["status"] = "failed"
         task["stage"] = "failed"
         task["error"] = err_msg
-        task["final_event"] = error_event
-        task["history"].append(error_event)
-        await task["queue"].put(error_event)
+        task["final_event"] = err_event
+        task["history"].append(err_event)
+        try:
+            task["queue"].put_nowait(err_event)
+        except Exception:
+            pass
 
 
 @app.post("/api/enhance/video")
@@ -413,19 +441,24 @@ async def api_enhance_video(
         "queue": asyncio.Queue(),
     }
 
-    # Start background task
-    asyncio.create_task(
-        _run_video_enhancer_task(
-            task_id=task_id,
-            in_path=in_path,
-            out_path=out_path,
-            upscale_factor=upscale_factor,
-            face_retouch=face_retouch,
-            sharpen=sharpen,
-            vibrance=vibrance,
-            denoise=denoise,
+    # Start background task in a dedicated daemon thread to ensure it survives
+    # TestClient per-request cancel scopes and never blocks or aborts prematurely
+    def _run_worker_thread():
+        asyncio.run(
+            _run_video_enhancer_task(
+                task_id=task_id,
+                in_path=in_path,
+                out_path=out_path,
+                upscale_factor=upscale_factor,
+                face_retouch=face_retouch,
+                sharpen=sharpen,
+                vibrance=vibrance,
+                denoise=denoise,
+            )
         )
-    )
+
+    t = threading.Thread(target=_run_worker_thread, daemon=True)
+    t.start()
 
     return {
         "status": "queued",
@@ -435,35 +468,41 @@ async def api_enhance_video(
     }
 
 
+@app.get("/api/tasks/{task_id}/events")
 @app.get("/api/progress/{task_id}")
-async def get_task_progress_sse(task_id: str):
-    """
-    Server-Sent Events (SSE) stream delivering real-time progress updates.
-    """
+async def stream_task_events(request: Request, task_id: str):
+    """SSE (Server-Sent Events) endpoint streaming real-time video processing updates."""
     if task_id not in TASKS:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
 
     task = TASKS[task_id]
 
     async def event_generator():
-        # Replay already emitted events if client connected late
-        for ev in task["history"]:
-            yield f"data: {json.dumps(ev)}\n\n"
-            if ev.get("status") in ("completed", "error"):
+        sent = 0
+        last_heartbeat = time.time()
+        while True:
+            if await request.is_disconnected():
+                break
+
+            events = list(task.get("history", []))
+            while sent < len(events):
+                event = events[sent]
+                sent += 1
+                yield f"data: {json.dumps(event)}\n\n"
+                if event.get("status") in ("completed", "failed", "error"):
+                    return
+
+            if task.get("status") in ("completed", "failed", "error") and sent >= len(events):
+                if task.get("final_event") and sent == 0:
+                    yield f"data: {json.dumps(task['final_event'])}\n\n"
                 return
 
-        # Listen for new events from the queue
-        while True:
-            try:
-                event = await asyncio.wait_for(task["queue"].get(), timeout=20.0)
-                yield f"data: {json.dumps(event)}\n\n"
-                if event.get("status") in ("completed", "error"):
-                    break
-            except asyncio.TimeoutError:
-                # Keep-alive heartbeat
-                yield ": keep-alive\n\n"
-                if task["status"] in ("completed", "error"):
-                    break
+            now = time.time()
+            if now - last_heartbeat >= 1.0:
+                last_heartbeat = now
+                yield ": heartbeat\n\n"
+
+            await asyncio.sleep(0.05)
 
     return StreamingResponse(
         event_generator(),
@@ -476,11 +515,10 @@ async def get_task_progress_sse(task_id: str):
     )
 
 
+@app.get("/api/tasks/{task_id}")
 @app.get("/api/status/{task_id}")
 async def get_task_status(task_id: str):
-    """
-    JSON poll fallback endpoint for task status inspection.
-    """
+    """JSON poll fallback endpoint to check status of async task."""
     if task_id not in TASKS:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
 
@@ -492,8 +530,8 @@ async def get_task_status(task_id: str):
         "percent": task["percent"],
         "fps": task["fps"],
         "message": task["message"],
-        "input_url": task["input_url"],
-        "output_url": task["output_url"],
-        "result": task["result"],
-        "error": task["error"],
+        "input_url": task.get("input_url"),
+        "output_url": task.get("output_url"),
+        "result": task.get("result"),
+        "error": task.get("error"),
     }

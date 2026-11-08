@@ -85,21 +85,49 @@ def calculate_ssim(img1: np.ndarray, img2: np.ndarray) -> float:
     return float(np.mean(ssim_map))
 
 
-def denoise_image(image: np.ndarray, strength: float = 0.3) -> np.ndarray:
+# Global cached Haar Cascade classifier so video frame processing never reloads XML from disk per frame
+_FACE_CASCADE: Optional[Any] = None
+
+
+def _get_face_cascade() -> Optional[Any]:
+    global _FACE_CASCADE
+    if _FACE_CASCADE is not None:
+        return _FACE_CASCADE
+    cascade_cls = getattr(cv2, "CascadeClassifier", None)
+    if cascade_cls is None:
+        return None
+    cascade_dir = getattr(cv2, "data", None)
+    if cascade_dir and hasattr(cascade_dir, "haarcascades"):
+        cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        if os.path.exists(cascade_path):
+            try:
+                _FACE_CASCADE = cascade_cls(cascade_path)
+            except Exception:
+                _FACE_CASCADE = None
+    return _FACE_CASCADE
+
+
+def denoise_image(
+    image: np.ndarray,
+    strength: float = 0.3,
+    denoise_strength: Optional[float] = None,
+) -> np.ndarray:
     """
     Apply edge-preserving dual-domain bilateral denoising.
+    Supports both `strength` and `denoise_strength` keyword arguments.
     """
-    if strength <= 0.0:
+    eff_strength = float(denoise_strength if denoise_strength is not None else strength)
+    if eff_strength <= 0.0:
         return image
     
     # Scale parameters by strength (0.0 - 1.0)
-    d = int(np.clip(5 + 6 * strength, 3, 11))
-    sigma_color = int(np.clip(25 + 50 * strength, 10, 85))
-    sigma_space = int(np.clip(15 + 40 * strength, 10, 60))
+    d = int(np.clip(5 + 6 * eff_strength, 3, 11))
+    sigma_color = int(np.clip(25 + 50 * eff_strength, 10, 85))
+    sigma_space = int(np.clip(15 + 40 * eff_strength, 10, 60))
     
     denoised = cv2.bilateralFilter(image, d=d, sigmaColor=sigma_color, sigmaSpace=sigma_space)
     # Blend according to strength
-    result = cv2.addWeighted(denoised, float(strength), image, float(1.0 - strength), 0)
+    result = cv2.addWeighted(denoised, eff_strength, image, float(1.0 - eff_strength), 0)
     return result
 
 
@@ -144,13 +172,15 @@ def apply_portrait_retouch(image: np.ndarray, strength: float = 0.5) -> np.ndarr
     result = image.copy()
     
     # Detect face bounding boxes if possible
-    cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
     face_boxes = []
-    if os.path.exists(cascade_path):
+    face_cascade = _get_face_cascade()
+    if face_cascade is not None:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        face_cascade = cv2.CascadeClassifier(cascade_path)
-        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=3, minSize=(30, 30))
-        face_boxes = list(faces)
+        det_scale = 0.5 if max(h, w) > 640 else 1.0
+        small_gray = cv2.resize(gray, (0, 0), fx=det_scale, fy=det_scale) if det_scale < 1.0 else gray
+        faces = face_cascade.detectMultiScale(small_gray, scaleFactor=1.15, minNeighbors=3, minSize=(24, 24))
+        inv = 1.0 / det_scale
+        face_boxes = [(int(round(fx * inv)), int(round(fy * inv)), int(round(fw * inv)), int(round(fh * inv))) for (fx, fy, fw, fh) in faces]
         
     # Get skin mask
     skin_mask = segment_skin(image)
@@ -230,22 +260,34 @@ def apply_portrait_retouch(image: np.ndarray, strength: float = 0.5) -> np.ndarr
     return result
 
 
-def apply_upscale(image: np.ndarray, upscale_factor: int = 2) -> np.ndarray:
+def apply_upscale(
+    image: np.ndarray,
+    scale_factor: float = 2.0,
+    upscale_factor: Optional[Any] = None,
+) -> np.ndarray:
     """
-    High-grade multi-scale Lanczos-4 upscaling with gradient edge reinforcement.
+    High-grade multi-scale Lanczos-4 Super-Resolution upscaling helper.
+    Supports both `scale_factor` and `upscale_factor` kwargs.
+    Enforces even dimensions for video codec compatibility.
     """
-    if upscale_factor <= 1:
+    factor = float(upscale_factor if upscale_factor is not None else scale_factor)
+    if factor <= 1.0 or factor <= 0:
         return image
         
-    h, w = image.shape[:2]
-    target_w = w * upscale_factor
-    target_h = h * upscale_factor
+    orig_h, orig_w = image.shape[:2]
+    new_w = max(2, int(round(orig_w * factor)))
+    new_h = max(2, int(round(orig_h * factor)))
+    # Ensure even dimensions for video codec compatibility
+    new_w += new_w % 2
+    new_h += new_h % 2
     
-    if upscale_factor == 2:
-        upscaled = cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
-    elif upscale_factor == 4:
+    if factor == 2.0:
+        return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+    elif factor == 4.0:
         # 2-stage multi-scale Lanczos-4 upscaling
-        mid_w, mid_h = w * 2, h * 2
+        mid_w, mid_h = orig_w * 2, orig_h * 2
+        mid_w += mid_w % 2
+        mid_h += mid_h % 2
         mid_img = cv2.resize(image, (mid_w, mid_h), interpolation=cv2.INTER_LANCZOS4)
         
         # Subtle intermediate edge refinement
@@ -260,28 +302,32 @@ def apply_upscale(image: np.ndarray, upscale_factor: int = 2) -> np.ndarray:
         mid_blur = cv2.GaussianBlur(mid_img, (3, 3), 0.8)
         mid_refined = np.clip(mid_img.astype(np.float32) + 0.25 * grad_mask * (mid_img.astype(np.float32) - mid_blur.astype(np.float32)), 0, 255).astype(np.uint8)
         
-        upscaled = cv2.resize(mid_refined, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
+        return cv2.resize(mid_refined, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
     else:
         # Arbitrary factor fallback
-        upscaled = cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
-        
-    return upscaled
+        return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
 
 
-def apply_vibrance_and_tone(image: np.ndarray, strength: float = 0.3) -> np.ndarray:
+def apply_vibrance_and_tone(
+    image: np.ndarray,
+    strength: float = 0.3,
+    vibrance: Optional[float] = None,
+) -> np.ndarray:
     """
     Dynamic tone and vibrance boost:
     1. LAB CLAHE on L-channel to expand dynamic range without chromatic shifting
     2. Intelligent non-linear saturation curve: boosts muted tones while protecting skin/vibrant areas
+    Supports both `strength` and `vibrance` kwargs.
     """
-    if strength <= 0.0:
+    eff_vibrance = float(vibrance if vibrance is not None else strength)
+    if eff_vibrance <= 0.0:
         return image
         
     # 1. LAB CLAHE on luminance
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     l_channel, a_channel, b_channel = cv2.split(lab)
     
-    clip_limit = 1.0 + 2.5 * float(strength)
+    clip_limit = 1.0 + 2.5 * eff_vibrance
     clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(8, 8))
     l_enhanced = clahe.apply(l_channel)
     
@@ -299,24 +345,33 @@ def apply_vibrance_and_tone(image: np.ndarray, strength: float = 0.3) -> np.ndar
     # Non-linear boost: delta_s = 1.0 - s_norm
     # Muted pixels (low s_norm) get maximum relative boost; saturated pixels stay protected
     delta_s = 1.0 - s_norm
-    s_boosted = s_norm + (float(strength) * 0.55 * delta_s * s_norm)
+    s_boosted = s_norm + (eff_vibrance * 0.55 * delta_s * s_norm)
     s_new = np.clip(s_boosted * 255.0, 0, 255).astype(np.float32)
     
     hsv_boosted = cv2.merge([h, s_new, v])
     result = cv2.cvtColor(hsv_boosted.astype(np.uint8), cv2.COLOR_HSV2BGR)
     
-    # Blend with original according to strength
-    blended = cv2.addWeighted(result, float(strength), image, float(1.0 - strength), 0)
+    # Blend with original according to eff_vibrance
+    blended = cv2.addWeighted(result, eff_vibrance, image, float(1.0 - eff_vibrance), 0)
     return blended
 
 
-def apply_cas_sharpening(image: np.ndarray, strength: float = 0.5) -> np.ndarray:
+enhance_tone_vibrance = apply_vibrance_and_tone
+
+
+def apply_cas_sharpening(
+    image: np.ndarray,
+    strength: float = 0.5,
+    amount: Optional[float] = None,
+) -> np.ndarray:
     """
     Contrast-Adaptive Sharpening (CAS) and dual-frequency luminance unsharp masking.
     Operates strictly on the L-channel in LAB space to eliminate color fringing and halo artifacts.
     Provides crisp edge definition and micro-texture recovery.
+    Supports both `strength` and `amount` kwargs.
     """
-    if strength <= 0.0:
+    eff_amount = float(amount if amount is not None else strength)
+    if eff_amount <= 0.0:
         return image
         
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
@@ -338,7 +393,7 @@ def apply_cas_sharpening(image: np.ndarray, strength: float = 0.5) -> np.ndarray
     adapt_weight = np.clip(1.0 + (contrast / 128.0), 0.8, 1.5)
     
     # Adaptive sharpening gain
-    sharpen_gain = 0.8 + 2.0 * float(strength)
+    sharpen_gain = 0.8 + 2.0 * eff_amount
     l_sharp = np.clip(l_float + sharpen_gain * adapt_weight * hp, 0, 255).astype(np.uint8)
     
     lab_sharp = cv2.merge([l_sharp, a, b])
@@ -346,96 +401,123 @@ def apply_cas_sharpening(image: np.ndarray, strength: float = 0.5) -> np.ndarray
     return result
 
 
+contrast_adaptive_sharpening = apply_cas_sharpening
+
+
 def enhance_image(
     input_path: str,
     output_path: str,
-    upscale_factor: int = 2,
-    face_retouch: float = 0.5,
-    sharpen: float = 0.5,
-    vibrance: float = 0.3,
-    denoise: float = 0.3,
+    scale_factor: float = 2.0,
+    denoise_strength: float = 0.25,
+    retouch_strength: float = 0.40,
+    sharpen_amount: float = 0.45,
+    vibrance_boost: float = 0.20,
+    clahe_clip: float = 1.5,
+    # Keyword aliases used by app/main.py and tests:
+    upscale_factor: Optional[int] = None,
+    face_retouch: Optional[float] = None,
+    sharpen: Optional[float] = None,
+    vibrance: Optional[float] = None,
+    denoise: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Core Image Enhancement Function.
-    Adheres strictly to the PROJECT.md interface contract:
-    
-    Args:
-        input_path: Path to input image file (PNG, JPG, WEBP, etc.)
-        output_path: Path to save enhanced output image
-        upscale_factor: Upscaling multiplier (1, 2, or 4)
-        face_retouch: Portrait retouching strength (0.0 to 1.0)
-        sharpen: CAS / adaptive unsharp sharpening strength (0.0 to 1.0)
-        vibrance: LAB CLAHE and saturation boost strength (0.0 to 1.0)
-        denoise: Dual-domain bilateral denoising strength (0.0 to 1.0)
-        
-    Returns:
-        dict matching contract specification:
-        {
-            "status": "success",
-            "input_resolution": [w, h],
-            "output_resolution": [w * upscale_factor, h * upscale_factor],
-            "processing_time_ms": float,
-            "metrics": {"sharpness_gain": float, "psnr_baseline": float}
-        }
+    Supports both legacy and PRD parameter conventions.
     """
     start_time = time.perf_counter()
-    
+
+    eff_scale = float(upscale_factor if upscale_factor is not None else scale_factor)
+    eff_denoise = float(denoise if denoise is not None else denoise_strength)
+    eff_retouch = float(face_retouch if face_retouch is not None else retouch_strength)
+    eff_sharpen = float(sharpen if sharpen is not None else sharpen_amount)
+    eff_vibrance = float(vibrance if vibrance is not None else vibrance_boost)
+
     if not os.path.exists(input_path):
         raise FileNotFoundError(f"Input image not found: {input_path}")
-        
-    # Read image
+
     img = cv2.imread(input_path, cv2.IMREAD_COLOR)
     if img is None:
         raise ValueError(f"Failed to read image at: {input_path}")
-        
+
     h_in, w_in = img.shape[:2]
-    
-    # Baseline comparison image (standard Lanczos-4 upscaled without enhancements)
-    target_w = w_in * upscale_factor
-    target_h = h_in * upscale_factor
+    orig_tenengrad = calculate_tenengrad(img)
+
+    target_w = max(2, int(round(w_in * eff_scale)))
+    target_h = max(2, int(round(h_in * eff_scale)))
+    if eff_scale > 1.0:
+        target_w += target_w % 2
+        target_h += target_h % 2
+
     baseline_upscaled = cv2.resize(img, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
     baseline_sharpness = calculate_tenengrad(baseline_upscaled)
-    
+
     # Step 1: Denoise filter
-    current = denoise_image(img, strength=denoise)
-    
-    # Step 2: Portrait Retouching & Natural Skin Smoothing (with pore preservation)
-    current = apply_portrait_retouch(current, strength=face_retouch)
-    
+    current = denoise_image(img, strength=eff_denoise)
+
+    # Step 2: Portrait Retouching & Natural Skin Smoothing
+    current = apply_portrait_retouch(current, strength=eff_retouch)
+
     # Step 3: High-grade Multi-Scale Lanczos-4 Super-Resolution
-    current = apply_upscale(current, upscale_factor=upscale_factor)
-    
+    if eff_scale != 1.0:
+        current = apply_upscale(current, scale_factor=eff_scale)
+
     # Step 4: Dynamic Tone & Vibrance Boost
-    current = apply_vibrance_and_tone(current, strength=vibrance)
-    
+    current = apply_vibrance_and_tone(current, strength=eff_vibrance)
+
     # Step 5: Deblur & Contrast-Adaptive Sharpening (CAS)
-    current = apply_cas_sharpening(current, strength=sharpen)
-    
+    current = apply_cas_sharpening(current, strength=eff_sharpen)
+
     # Save output
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-    success = cv2.imwrite(output_path, current)
-    if not success:
-        # Fallback using PIL
-        pil_img = Image.fromarray(cv2.cvtColor(current, cv2.COLOR_BGR2RGB))
-        pil_img.save(output_path)
-        
-    processing_time_ms = (time.perf_counter() - start_time) * 1000.0
-    
-    # Calculate quality metrics
+    ext = os.path.splitext(output_path)[1].lower()
+    if ext in [".jpg", ".jpeg"]:
+        cv2.imwrite(output_path, current, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
+    elif ext == ".png":
+        cv2.imwrite(output_path, current, [int(cv2.IMWRITE_PNG_COMPRESSION), 3])
+    elif ext == ".webp":
+        cv2.imwrite(output_path, current, [int(cv2.IMWRITE_WEBP_QUALITY), 98])
+    else:
+        success = cv2.imwrite(output_path, current)
+        if not success:
+            pil_img = Image.fromarray(cv2.cvtColor(current, cv2.COLOR_BGR2RGB))
+            pil_img.save(output_path)
+
+    duration_sec = time.perf_counter() - start_time
+    processing_time_ms = duration_sec * 1000.0
+
+    final_h, final_w = current.shape[:2]
     enhanced_sharpness = calculate_tenengrad(current)
     sharpness_gain = (
         enhanced_sharpness / baseline_sharpness
         if baseline_sharpness > 0 else 1.0
     )
     psnr_baseline = calculate_psnr(baseline_upscaled, current)
-    
+    psnr_val = calculate_psnr(img, current)
+    ssim_val = calculate_ssim(img, current)
+    tenengrad_gain = round(((enhanced_sharpness - orig_tenengrad) / max(orig_tenengrad, 1e-5)) * 100, 2)
+
     return {
         "status": "success",
+        "input_path": input_path,
+        "output_path": output_path,
         "input_resolution": [w_in, h_in],
-        "output_resolution": [target_w, target_h],
+        "output_resolution": [final_w, final_h],
+        "original_resolution": f"{w_in}x{h_in}",
+        "scale_factor": eff_scale,
+        "processing_time_sec": round(duration_sec, 3),
         "processing_time_ms": round(processing_time_ms, 2),
+        "tenengrad_before": round(orig_tenengrad, 2),
+        "tenengrad_after": round(enhanced_sharpness, 2),
+        "tenengrad_improvement_pct": tenengrad_gain,
+        "psnr_db": round(psnr_val, 2),
+        "ssim": round(ssim_val, 4),
         "metrics": {
             "sharpness_gain": round(sharpness_gain, 4),
             "psnr_baseline": round(psnr_baseline, 2),
+            "tenengrad_before": round(orig_tenengrad, 2),
+            "tenengrad_after": round(enhanced_sharpness, 2),
+            "tenengrad_gain": tenengrad_gain,
+            "psnr_db": round(psnr_val, 2),
+            "ssim": round(ssim_val, 4),
         },
     }
