@@ -1,0 +1,56 @@
+# Virtual environment
+.venv/
+env/
+venv/
+ENV/
+
+# Python cache & artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing & Cache
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Internal agent data & logs
+.agents/
+*.log
+launcher_test.log
+
+# Media uploads & temporary outputs (keep structure via .gitkeep)
+media/*
+!media/.gitkeep
+out_odd_*.mp4
+
+# Environment variables & secrets
+.env
+.env.*
+*.secret
+
+# OS artifacts
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
