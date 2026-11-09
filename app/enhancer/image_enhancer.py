@@ -146,6 +146,45 @@ def _run_neural_tile_inference(
     return cv2.cvtColor(np.clip(output, 0, 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
 
 
+NCNN_BIN_PATH = Path(__file__).resolve().parent.parent.parent / "bin" / "realesrgan" / "realesrgan-ncnn-vulkan.exe"
+NCNN_MODELS_PATH = Path(__file__).resolve().parent.parent.parent / "bin" / "realesrgan" / "models"
+
+
+def _run_realesrgan_ncnn(
+    image_bgr: np.ndarray,
+    scale: int = 4,
+    model_name: str = "realesrgan-x4plus",
+) -> Optional[np.ndarray]:
+    """
+    Executes native C++ Real-ESRGAN NCNN Vulkan binary (the exact same engine powering Upscayl).
+    Uses hardware GPU Vulkan acceleration for ultra-fast, zero-setup 1080p/4K neural super-resolution.
+    """
+    if not NCNN_BIN_PATH.exists() or not NCNN_MODELS_PATH.exists():
+        return None
+    try:
+        import tempfile, subprocess
+        with tempfile.TemporaryDirectory() as td:
+            in_f = Path(td) / "in.png"
+            out_f = Path(td) / "out.png"
+            cv2.imwrite(str(in_f), image_bgr)
+            cmd = [
+                str(NCNN_BIN_PATH),
+                "-i", str(in_f),
+                "-o", str(out_f),
+                "-s", str(scale),
+                "-m", str(NCNN_MODELS_PATH),
+                "-n", model_name,
+            ]
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=45)
+            if res.returncode == 0 and out_f.exists():
+                res_img = cv2.imread(str(out_f))
+                if res_img is not None and res_img.size > 0:
+                    return res_img
+    except Exception:
+        pass
+    return None
+
+
 def calculate_tenengrad(image: np.ndarray) -> float:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
     sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
@@ -421,6 +460,18 @@ def apply_upscale(
 
     if fast_mode:
         return _single_octave_2x_reconstruct(image, sharpen_power=sharpen_power, is_second_octave=False, fast_mode=True)
+
+    # Path 0: Native Real-ESRGAN NCNN Vulkan GPU Acceleration (Upscayl Core Engine)
+    if not fast_mode and max(orig_h, orig_w) <= 2500 and min(orig_h, orig_w) >= 32:
+        try:
+            ncnn_scale = 4 if eff_scale > 2.05 else 2
+            ncnn_out = _run_realesrgan_ncnn(image, scale=ncnn_scale, model_name="realesrgan-x4plus")
+            if ncnn_out is not None and calculate_tenengrad(ncnn_out) >= calculate_tenengrad(image) * 0.85:
+                if ncnn_out.shape[1] != final_w or ncnn_out.shape[0] != final_h:
+                    ncnn_out = cv2.resize(ncnn_out, (final_w, final_h), interpolation=cv2.INTER_LANCZOS4)
+                return contrast_adaptive_sharpening(ncnn_out, amount=sharpen_power * 0.70)
+        except Exception:
+            pass
 
     # Path A: Embedded Real-ESRGAN Neural Generator + SDF 1080p Finisher
     neural_model, neural_device = _get_or_load_neural_sr_generator()
